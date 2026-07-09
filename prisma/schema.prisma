@@ -1,0 +1,157 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Company {
+  id                String             @id @default(cuid())
+  name              String
+  website           String?
+  email             String?
+  phone             String?
+  linkedinUrl       String?
+  industry          String?
+  location          String?
+  city              String?
+  notes             String?
+  status            String             @default("new")
+  sourceUrl         String?
+  sourceType        String?
+  rating            Float?
+  reviewCount       Int?
+  latitude          Float?
+  longitude         Float?
+  leadFingerprint   String?            @unique
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  contacts          Contact[]
+  generatedMessages GeneratedMessage[]
+  leads             Lead[]
+}
+
+model LeadSearch {
+  id              String    @id @default(cuid())
+  keyword         String
+  area            String
+  requestedLimit  Int
+  enrichEmails    Boolean   @default(false)
+  status          String    @default("running")
+  foundCount      Int       @default(0)
+  skippedCount    Int       @default(0)
+  error           String?
+  createdAt       DateTime  @default(now())
+  completedAt     DateTime?
+  leads           Lead[]
+
+  @@index([createdAt])
+  @@index([status])
+}
+
+model Lead {
+  id              String     @id @default(cuid())
+  searchId        String
+  search          LeadSearch @relation(fields: [searchId], references: [id], onDelete: Cascade)
+  companyId       String?
+  company         Company?   @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  name            String
+  category        String?
+  address         String?
+  city            String?
+  phone           String?
+  email           String?
+  website         String?
+  rating          Float?
+  reviewCount     Int?
+  latitude        Float?
+  longitude       Float?
+  sourceUrl       String
+  fingerprint     String
+  status          String     @default("new")
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  @@index([searchId, status])
+  @@index([fingerprint])
+  @@index([companyId])
+  @@index([city])
+}
+
+model Contact {
+  id                String             @id @default(cuid())
+  fullName          String
+  title             String?
+  email             String
+  linkedinUrl       String?
+  phone             String?
+  notes             String?
+  companyId         String?
+  company           Company?           @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  generatedMessages GeneratedMessage[]
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+}
+
+model GeneratedMessage {
+  id        String   @id @default(cuid())
+  companyId String?
+  contactId String?
+  company   Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  contact   Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  purpose   String
+  tone      String
+  language  String   @default("English")
+  subject   String
+  body      String
+  provider  String
+  createdAt DateTime @default(now())
+
+  @@index([companyId])
+  @@index([contactId])
+  @@index([createdAt])
+}
+
+model EmailTemplate {
+  id        String   @id @default(cuid())
+  name      String
+  type      String
+  subject   String
+  body      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ActivityLog {
+  id          String   @id @default(cuid())
+  action      String
+  entityType  String
+  entityName  String?
+  description String?
+  createdAt   DateTime @default(now())
+}
+
+model UserSettings {
+  id                 String   @id @default(cuid())
+  singletonKey       String   @unique @default("default")
+  candidateProfile   String   @default("")
+  defaultSignature   String   @default("")
+  defaultTone        String   @default("professional")
+  defaultLanguage    String   @default("English")
+  fullName           String   @default("")
+  email              String   @default("")
+  phone              String   @default("")
+  location           String   @default("")
+  targetRole         String   @default("")
+  experienceSummary  String   @default("")
+  skills             String   @default("")
+  languages          String   @default("")
+  preferredLocations String   @default("")
+  cvText             String   @default("")
+  aiProvider         String   @default("mock")
+  nvidiaApiKey       String   @default("")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}

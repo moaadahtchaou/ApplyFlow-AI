@@ -1,0 +1,278 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Design Tokens ───────────────────────────────────────────────────────── */
+:root {
+  color-scheme: light;
+
+  /* Backgrounds */
+  --color-background:        #f8faf9;
+  --color-surface:           #ffffff;
+  --color-surface-elevated:  #ffffff;
+  --color-surface-soft:      #f0f9f5;
+  --color-surface-tint:      #d1fae5;
+
+  /* Borders */
+  --color-border:            #d1d5db;
+  --color-border-subtle:     #e5e7eb;
+
+  /* Brand – Primary (Emerald) */
+  --color-primary:           #059669;
+  --color-primary-hover:     #047857;
+  --color-primary-soft:      #d1fae5;
+  --color-primary-text:      #065f46;
+
+  /* Brand – Accent (Lime) */
+  --color-accent:            #84cc16;
+
+  /* Text */
+  --color-on-surface:        #0f172a;
+  --color-on-surface-variant:#374151;
+  --color-on-surface-muted:  #9ca3af;
+
+  /* Semantic */
+  --color-success:           #10b981;
+  --color-success-soft:      #d1fae5;
+  --color-warning:           #f59e0b;
+  --color-warning-soft:      #fef3c7;
+  --color-danger:            #ef4444;
+  --color-danger-soft:       #fee2e2;
+  --color-overlay:           rgba(0,0,0,0.40);
+
+  /* Focus ring (static value for @apply compatibility) */
+  --ring-primary:            rgba(5,150,105,0.2);
+  --ring-danger:             rgba(239,68,68,0.2);
+}
+
+.dark {
+  color-scheme: dark;
+
+  --color-background:        #0d1b2a;
+  --color-surface:           #162032;
+  --color-surface-elevated:  #1e2d3d;
+  --color-surface-soft:      #1a2738;
+  --color-surface-tint:      #1a3a2e;
+
+  --color-border:            #2d4057;
+  --color-border-subtle:     #253347;
+
+  --color-primary:           #10b981;
+  --color-primary-hover:     #34d399;
+  --color-primary-soft:      #0a3d2b;
+  --color-primary-text:      #6ee7b7;
+
+  --color-accent:            #a3e635;
+
+  --color-on-surface:        #f0f9ff;
+  --color-on-surface-variant:#94a3b8;
+  --color-on-surface-muted:  #475569;
+
+  --color-success:           #34d399;
+  --color-success-soft:      #064e3b;
+  --color-warning:           #fbbf24;
+  --color-warning-soft:      #451a03;
+  --color-danger:            #f87171;
+  --color-danger-soft:       #450a0a;
+  --color-overlay:           rgba(0,0,0,0.60);
+
+  --ring-primary:            rgba(16,185,129,0.25);
+  --ring-danger:             rgba(248,113,113,0.25);
+}
+
+/* ── Base ────────────────────────────────────────────────────────────────── */
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  min-height: 100vh;
+  background-color: var(--color-background);
+  color: var(--color-on-surface);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--color-primary-soft);
+  color: var(--color-primary-text);
+}
+
+/* ── Scrollbar ───────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-on-surface-muted);
+}
+
+/* ── Focus ring ──────────────────────────────────────────────────────────── */
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* ── Reduced motion ──────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Component Layer ─────────────────────────────────────────────────────── */
+@layer components {
+
+  /* ── Cards ─────────────────────────────────── */
+  .card {
+    @apply rounded-xl border border-border bg-surface shadow-card;
+  }
+  .card-elevated {
+    @apply rounded-xl border border-border bg-surface-elevated shadow-card;
+  }
+  .panel {
+    @apply rounded-xl border border-border bg-surface shadow-card backdrop-blur;
+  }
+  .surface-panel {
+    @apply rounded-xl border border-border-subtle bg-surface-soft;
+  }
+  .metric-card {
+    @apply card p-5 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-card-hover cursor-default;
+  }
+
+  /* ── Forms ─────────────────────────────────── */
+  .input {
+    @apply w-full rounded-lg border border-border bg-surface px-3.5 py-2.5 text-sm text-on-surface outline-none
+           transition placeholder:text-on-surface-muted;
+  }
+  .input:focus {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px var(--ring-primary);
+  }
+  .label {
+    @apply text-xs font-semibold uppercase tracking-wide text-on-surface-variant;
+  }
+
+  /* ── Buttons ────────────────────────────────── */
+  .btn-base {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg text-sm font-semibold
+           transition-all duration-150 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 active:scale-[0.97];
+  }
+  .btn-sm {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold
+           transition-all duration-150 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold
+           bg-primary text-white transition-all duration-150 active:scale-[0.97]
+           disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary:hover {
+    background-color: var(--color-primary-hover);
+  }
+  .btn-primary:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-border px-4 py-2.5 text-sm font-semibold
+           bg-surface text-on-surface-variant transition-all duration-150 active:scale-[0.97]
+           disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-secondary:hover {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+    background-color: var(--color-surface-soft);
+  }
+  .btn-secondary:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border px-4 py-2.5 text-sm font-semibold
+           transition-all duration-150 active:scale-[0.97]
+           disabled:cursor-not-allowed disabled:opacity-50;
+    border-color: rgba(239,68,68,0.3);
+    background-color: var(--color-danger-soft);
+    color: var(--color-danger);
+  }
+  .btn-danger:hover {
+    background-color: var(--color-danger-soft);
+    opacity: 0.85;
+  }
+  .btn-danger:focus-visible {
+    outline: 2px solid var(--color-danger);
+    outline-offset: 2px;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold
+           text-on-surface-variant transition-all duration-150 active:scale-[0.97];
+  }
+  .btn-ghost:hover {
+    background-color: var(--color-surface-soft);
+    color: var(--color-on-surface);
+  }
+  .btn-icon {
+    @apply inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border
+           bg-surface text-on-surface-variant transition-all duration-150
+           focus:outline-none disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-icon:hover {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+  }
+
+  /* ── Tables ─────────────────────────────────── */
+  .app-table {
+    @apply min-w-full border-collapse overflow-hidden rounded-xl border border-border bg-surface shadow-card;
+  }
+  .table-th {
+    @apply bg-surface-soft px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide
+           text-on-surface-variant border-b border-border;
+  }
+  .table-td {
+    @apply border-t border-border-subtle px-4 py-3.5 align-top text-sm text-on-surface-variant;
+  }
+  .table-row-hover {
+    @apply transition-colors;
+  }
+  .table-row-hover:hover {
+    background-color: var(--color-surface-soft);
+  }
+
+  /* ── Badges ─────────────────────────────────── */
+  .badge {
+    @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold;
+  }
+  .badge-primary {
+    @apply badge;
+    background-color: var(--color-primary-soft);
+    color: var(--color-primary-text);
+  }
+  .badge-success {
+    @apply badge;
+    background-color: var(--color-success-soft);
+    color: var(--color-success);
+  }
+  .badge-warning {
+    @apply badge;
+    background-color: var(--color-warning-soft);
+    color: var(--color-warning);
+  }
+  .badge-danger {
+    @apply badge;
+    background-color: var(--color-danger-soft);
+    color: var(--color-danger);
+  }
+  .badge-muted {
+    @apply badge bg-surface-soft text-on-surface-muted;
+  }
+
+  /* ── Skeleton ───────────────────────────────── */
+  .skeleton {
+    @apply animate-skeleton rounded bg-surface-soft;
+  }
+}
