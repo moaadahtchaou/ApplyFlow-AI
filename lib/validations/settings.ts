@@ -18,7 +18,7 @@ export const profileSettingsSchema = z.object({
 
 export const systemSettingsSchema = z.object({
   aiProvider: z.enum(['mock', 'nvidia']),
-  nvidiaApiKey: z.string().trim(),
+  nvidiaApiKey: z.string().trim().max(500).optional(),
   defaultTone: z.enum(tones),
   defaultLanguage: z.enum(messageLanguages)
 });

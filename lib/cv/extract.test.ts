@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  CvValidationError,
   MAX_CV_FILE_SIZE,
   detectCvFileKind,
   extractTextFromCvFile,
@@ -33,8 +32,8 @@ describe('CV extraction utilities', () => {
   });
 
   it('rejects unsupported, empty, and too-large files', () => {
-    expect(() => validateCvFileMetadata({ name: 'cv.docx', type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', size: 100 }))
-      .toThrow(CvValidationError);
+    expect(validateCvFileMetadata({ name: 'cv.docx', type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', size: 100 }))
+      .toBe('docx');
     expect(() => validateCvFileMetadata({ name: 'cv.txt', type: 'text/plain', size: 0 }))
       .toThrow('empty');
     expect(() => validateCvFileMetadata({ name: 'cv.txt', type: 'text/plain', size: MAX_CV_FILE_SIZE + 1 }))

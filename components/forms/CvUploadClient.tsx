@@ -2,243 +2,453 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import type {
+  AIExecutionMetadata,
+  CandidateProfile,
+  CVExtractionResult
+} from '@/lib/ai/contracts';
 
-type CvDraft = {
-  cvText: string;
-  candidateProfile: string;
-  skills: string;
-  experienceSummary: string;
-  targetRole: string;
-  languages: string;
-  preferredLocations: string;
-  bestFitBullets: string[];
-  targetRolesDetected: string[];
-  missingProfileWarnings: string[];
+type AiError = {
+  code: string;
+  message: string;
+  retryable?: boolean;
+  provider?: 'nvidia' | 'mock';
+  model?: string;
+  requestId?: string;
+  debug?: {
+    status?: number;
+    correlationId?: string;
+    responseContentType?: string;
+    responseExcerpt?: string;
+    networkCause?: string;
+    zodIssues?: Array<{ path: string; message: string }>;
+    optionalParametersRemoved?: string[];
+    pendingWithoutPollingUrl?: boolean;
+  };
 };
 
 type AnalyzeResponse = {
-  fileName?: string;
-  fileKind?: 'pdf' | 'text';
-  draft?: CvDraft;
-  provider?: 'nvidia' | 'mock';
-  fallbackReason?: string;
-  error?: string;
+  success?: boolean;
+  extraction?: CVExtractionResult;
+  profile?: CandidateProfile;
+  providerMetadata?: AIExecutionMetadata;
+  promptVersion?: string;
+  error?: AiError | string;
 };
 
-type ApplyResponse = {
-  error?: string;
-};
-
-type DraftTextKey =
-  | 'cvText'
-  | 'candidateProfile'
-  | 'skills'
-  | 'experienceSummary'
-  | 'targetRole'
-  | 'languages'
-  | 'preferredLocations';
-
-function PillList({ items, tone = 'slate' }: { items: string[]; tone?: 'slate' | 'amber' | 'indigo' }) {
-  if (items.length === 0) {
-    return <p className="text-sm text-slate-500">Nothing detected yet.</p>;
-  }
-
-  const toneClass =
-    tone === 'amber'
-      ? 'border-amber-200 bg-amber-50 text-amber-800'
-      : tone === 'indigo'
-        ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
-        : 'border-slate-200 bg-slate-50 text-slate-700';
-
-  return (
-    <div className="flex flex-wrap gap-2">
-      {items.map((item) => (
-        <span key={item} className={`rounded-full border px-3 py-1 text-xs font-bold ${toneClass}`}>
-          {item}
-        </span>
-      ))}
-    </div>
-  );
+function normalizedError(value: AiError | string | undefined, fallback: string): AiError {
+  if (typeof value === 'string') return { code: 'UNKNOWN_AI_ERROR', message: value };
+  return value ?? { code: 'UNKNOWN_AI_ERROR', message: fallback };
 }
 
-export function CvUploadClient() {
+function Lines({ items, empty = 'None detected.' }: { items: string[]; empty?: string }) {
+  return items.length ? (
+    <ul className="divide-y divide-border-subtle rounded-lg border border-border">
+      {items.map((item) => <li key={item} className="px-3 py-2 text-sm text-on-surface-variant">{item}</li>)}
+    </ul>
+  ) : <p className="text-sm text-on-surface-muted">{empty}</p>;
+}
+
+function commaValues(value: string) {
+  return value.split(/[,\n]/).map((item) => item.trim()).filter(Boolean);
+}
+
+export function CvUploadClient({
+  initialExtraction,
+  initialProfile,
+  initialMetadata,
+  initialPromptVersion,
+  activeProvider,
+  activeModel
+}: {
+  initialExtraction?: CVExtractionResult | null;
+  initialProfile?: CandidateProfile | null;
+  initialMetadata?: AIExecutionMetadata | null;
+  initialPromptVersion?: string | null;
+  activeProvider: 'nvidia' | 'mock';
+  activeModel: string;
+}) {
   const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
-  const [draft, setDraft] = useState<CvDraft | null>(null);
-  const [provider, setProvider] = useState<'nvidia' | 'mock' | null>(null);
-  const [fileName, setFileName] = useState('');
-  const [fallbackReason, setFallbackReason] = useState('');
-  const [analyzing, setAnalyzing] = useState(false);
-  const [applying, setApplying] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
+  const [manualText, setManualText] = useState('');
+  const [extraction, setExtraction] = useState<CVExtractionResult | null>(initialExtraction ?? null);
+  const [profile, setProfile] = useState<CandidateProfile | null>(initialProfile ?? null);
+  const [metadata, setMetadata] = useState<AIExecutionMetadata | null>(initialMetadata ?? null);
+  const [promptVersion, setPromptVersion] = useState(initialPromptVersion ?? '');
+  const [busy, setBusy] = useState<'extract' | 'analyze' | 'save' | null>(null);
+  const [operationError, setOperationError] = useState('');
+  const [analysisError, setAnalysisError] = useState<AiError | null>(null);
+  const [success, setSuccess] = useState('');
+  const [analysisOutdated, setAnalysisOutdated] = useState(false);
+  const [textEdited, setTextEdited] = useState(false);
 
-  function updateDraft(key: DraftTextKey, value: string) {
-    setDraft((current) => current ? { ...current, [key]: value } : current);
+  function markAnalysisOutdated() {
+    setAnalysisOutdated(Boolean(profile));
+    setSuccess('');
+    setAnalysisError(null);
+  }
+
+  async function extract() {
+    if (busy) return;
+    if (!file && manualText.trim().length < 20) {
+      setOperationError('Choose a PDF, DOCX, or text file, or paste at least 20 characters.');
+      return;
+    }
+    setBusy('extract');
+    setOperationError('');
+    setAnalysisError(null);
+    setSuccess('');
+    try {
+      const formData = new FormData();
+      if (file) formData.append('file', file);
+      else formData.append('manualText', manualText);
+      const response = await fetch('/api/settings/cv/analyze', { method: 'POST', body: formData });
+      const payload = (await response.json()) as AnalyzeResponse;
+      if (!response.ok || !payload.extraction) {
+        throw new Error(normalizedError(payload.error, 'Could not extract CV text.').message);
+      }
+      setExtraction(payload.extraction);
+      setTextEdited(false);
+      setAnalysisOutdated(Boolean(profile));
+    } catch (error) {
+      setOperationError(error instanceof Error ? error.message : 'Could not extract CV text.');
+    } finally {
+      setBusy(null);
+    }
   }
 
   async function analyze() {
-    if (!file) {
-      setError('Choose a PDF or text CV first.');
-      return;
-    }
-
-    setAnalyzing(true);
-    setError(null);
-    setSuccess(null);
-    setFallbackReason('');
-
+    if (!extraction || busy) return;
+    setBusy('analyze');
+    setOperationError('');
+    setAnalysisError(null);
+    setSuccess('');
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-
       const response = await fetch('/api/settings/cv/analyze', {
         method: 'POST',
-        body: formData
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: extraction.text, extraction })
       });
       const payload = (await response.json()) as AnalyzeResponse;
-
-      if (!response.ok || !payload.draft) {
-        throw new Error(payload.error ?? 'Could not analyze this CV.');
+      if (!response.ok || !payload.profile || !payload.providerMetadata || !payload.extraction) {
+        setAnalysisError(normalizedError(payload.error, 'Could not structure this CV.'));
+        return;
       }
-
-      setDraft(payload.draft);
-      setProvider(payload.provider ?? 'mock');
-      setFileName(payload.fileName ?? file.name);
-      setFallbackReason(payload.fallbackReason ?? '');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not analyze this CV.');
+      setExtraction(payload.extraction);
+      setProfile(payload.profile);
+      setMetadata(payload.providerMetadata);
+      setPromptVersion(payload.promptVersion ?? '');
+      setAnalysisOutdated(false);
+      setTextEdited(false);
+      setSuccess(
+        payload.providerMetadata.provider === 'mock'
+          ? 'CV analysis completed in Mock mode. Review the testing output before saving.'
+          : 'CV analysis completed with NVIDIA. Review the structured profile before saving.'
+      );
+    } catch {
+      setAnalysisError({
+        code: 'PROVIDER_UNAVAILABLE',
+        message: 'The analysis request could not reach the ApplyFlow server.',
+        retryable: true,
+        provider: activeProvider,
+        model: activeModel
+      });
     } finally {
-      setAnalyzing(false);
+      setBusy(null);
     }
   }
 
-  async function applyDraft() {
-    if (!draft) return;
-
-    setApplying(true);
-    setError(null);
-    setSuccess(null);
-
+  async function save() {
+    if (!extraction || !profile || !metadata || !promptVersion || analysisOutdated || busy) return;
+    setBusy('save');
+    setOperationError('');
+    setAnalysisError(null);
     try {
       const response = await fetch('/api/settings/cv/apply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ draft })
+        body: JSON.stringify({ extraction, profile, providerMetadata: metadata, promptVersion })
       });
-      const payload = (await response.json()) as ApplyResponse;
-
+      const payload = (await response.json()) as AnalyzeResponse;
       if (!response.ok) {
-        throw new Error(payload.error ?? 'Could not save CV context.');
+        const failure = normalizedError(payload.error, 'The candidate profile could not be saved.');
+        setAnalysisError(failure);
+        return;
       }
-
-      setSuccess('CV context saved. AI Generator will now use this candidate profile by default.');
+      setSuccess('Structured candidate profile saved. Existing company matches are now marked outdated.');
       router.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not save CV context.');
+    } catch {
+      setAnalysisError({
+        code: 'DATABASE_SAVE_FAILED',
+        message: 'The candidate profile could not be saved.',
+        retryable: true
+      });
     } finally {
-      setApplying(false);
+      setBusy(null);
     }
   }
 
+  const status = busy === 'analyze'
+    ? 'Analysis in progress'
+    : analysisError
+      ? analysisError.code === 'INVALID_JSON'
+        ? 'Invalid JSON'
+        : analysisError.code === 'SCHEMA_VALIDATION_FAILED'
+          ? 'Schema validation failure'
+          : analysisError.code === 'DATABASE_SAVE_FAILED'
+            ? 'Candidate profile save failure'
+            : 'Provider connection failure'
+      : analysisOutdated
+        ? 'Analysis outdated'
+        : metadata
+          ? `Analysis successful with ${metadata.provider === 'mock' ? 'Mock' : 'NVIDIA'}`
+          : extraction
+            ? textEdited ? 'CV text edited — analysis not started' : 'CV text extracted — analysis not started'
+            : 'CV not uploaded';
+
   return (
     <div className="space-y-5">
-      <div className="rounded-xl border border-dashed border-outline/90 bg-surface-soft/50 p-4">
-        <label className="space-y-2">
+      <div className="rounded-lg border border-border px-4 py-3 text-sm">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="font-semibold text-on-surface">{status}</span>
+          <span className="text-xs text-on-surface-muted">
+            {activeProvider === 'mock' ? 'Mock' : 'NVIDIA'} · {activeModel}
+          </span>
+        </div>
+        {activeProvider === 'mock' ? (
+          <p className="mt-2 text-xs leading-5 text-warning">
+            Mock mode is active. This analysis is intended for testing and may be generic.
+          </p>
+        ) : null}
+      </div>
+
+      <div className="space-y-4 rounded-lg border border-border bg-surface-soft/40 p-4">
+        <label className="block space-y-2">
           <span className="label">CV file</span>
           <input
             className="input"
             type="file"
-            accept=".pdf,.txt,.text,.md,application/pdf,text/plain,text/markdown"
+            accept=".pdf,.docx,.txt,.text,.md,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown"
             onChange={(event) => {
-              const selected = event.target.files?.[0] ?? null;
-              setFile(selected);
-              setDraft(null);
-              setError(null);
-              setSuccess(null);
-              setProvider(null);
-              setFileName('');
-              setFallbackReason('');
+              setFile(event.target.files?.[0] ?? null);
+              setOperationError('');
             }}
           />
         </label>
-        <p className="mt-3 text-xs leading-5 text-slate-500">
-          PDF/TXT only, max 5 MB. The original file is not stored; ApplyFlow saves only extracted text and reviewed context.
+        <div className="text-center text-xs text-on-surface-muted">or</div>
+        <label className="block space-y-2">
+          <span className="label">Paste CV text manually</span>
+          <textarea
+            className="input min-h-28"
+            value={manualText}
+            onChange={(event) => setManualText(event.target.value)}
+            placeholder="Use this when the PDF has no usable text layer."
+          />
+        </label>
+        <p className="text-xs leading-5 text-on-surface-muted">
+          PDF, DOCX, or text; maximum 5 MB. The original file is not stored.
         </p>
-        <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center">
-          <button className="btn-primary" type="button" onClick={analyze} disabled={!file || analyzing}>
-            {analyzing ? 'Analyzing CV...' : 'Analyze CV'}
-          </button>
-          {provider ? (
-            <span className="status-chip bg-indigo-50 text-indigo-700 ring-indigo-200">
-              Provider: {provider}
-            </span>
-          ) : null}
-          {fileName ? <span className="text-xs font-semibold text-slate-500">Analyzed: {fileName}</span> : null}
-        </div>
+        <button className="btn-primary" type="button" onClick={extract} disabled={busy !== null}>
+          {busy === 'extract' ? 'Extracting text…' : extraction ? 'Extract new text' : 'Extract text'}
+        </button>
       </div>
 
-      {fallbackReason ? (
-        <p className="rounded-2xl bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
-          NVIDIA fallback: {fallbackReason}
-        </p>
+      {operationError ? (
+        <p className="rounded-lg bg-danger-soft px-4 py-3 text-sm font-semibold text-danger">{operationError}</p>
       ) : null}
-      {error ? <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{error}</p> : null}
-      {success ? <p className="rounded-2xl bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">{success}</p> : null}
+      {analysisError ? (
+        <div className="rounded-lg bg-danger-soft px-4 py-3 text-sm text-danger">
+          <p className="font-semibold">{analysisError.message}</p>
+          <p className="mt-1 text-xs">
+            {analysisError.code}
+            {analysisError.requestId ? ` · Request ${analysisError.requestId}` : ''}
+          </p>
+          {analysisError.retryable && extraction ? (
+            <button className="btn-sm btn-secondary mt-3" type="button" onClick={analyze} disabled={busy !== null}>
+              Retry analysis
+            </button>
+          ) : null}
+          {analysisError.debug ? (
+            <details className="mt-3 border-t border-danger/20 pt-3 text-xs text-on-surface-variant">
+              <summary className="cursor-pointer font-semibold">Development debug details</summary>
+              <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+                <dt>Provider</dt><dd>{analysisError.provider ?? activeProvider}</dd>
+                <dt>Model</dt><dd className="break-all">{analysisError.model ?? activeModel}</dd>
+                <dt>HTTP status</dt><dd>{analysisError.debug.status ?? '—'}</dd>
+                <dt>Error code</dt><dd>{analysisError.code}</dd>
+                <dt>Request ID</dt><dd className="break-all">{analysisError.requestId ?? '—'}</dd>
+                <dt>Retryable</dt><dd>{analysisError.retryable ? 'Yes' : 'No'}</dd>
+                <dt>Content type</dt><dd>{analysisError.debug.responseContentType ?? '—'}</dd>
+              </dl>
+              {analysisError.debug.networkCause ? <p className="mt-2">{analysisError.debug.networkCause}</p> : null}
+              {analysisError.debug.responseExcerpt ? (
+                <pre className="mt-2 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-surface p-2">
+                  {analysisError.debug.responseExcerpt}
+                </pre>
+              ) : null}
+              {analysisError.debug.zodIssues?.length ? (
+                <ul className="mt-2 space-y-1">
+                  {analysisError.debug.zodIssues.map((issue) => (
+                    <li key={`${issue.path}:${issue.message}`}>{issue.path}: {issue.message}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </details>
+          ) : null}
+        </div>
+      ) : null}
+      {success ? <p className="rounded-lg bg-success-soft px-4 py-3 text-sm font-semibold text-success">{success}</p> : null}
 
-      {draft ? (
-        <div className="space-y-5">
+      {extraction ? (
+        <div className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="rounded-lg border border-border px-3 py-2">
+              <p className="text-xs text-on-surface-muted">Extraction quality</p>
+              <p className="mt-1 font-semibold text-on-surface">{extraction.qualityScore}/10</p>
+            </div>
+            <div className="rounded-lg border border-border px-3 py-2">
+              <p className="text-xs text-on-surface-muted">Readable words</p>
+              <p className="mt-1 font-semibold text-on-surface">{extraction.wordCount}</p>
+            </div>
+            <div className="rounded-lg border border-border px-3 py-2">
+              <p className="text-xs text-on-surface-muted">Input</p>
+              <p className="mt-1 truncate font-semibold text-on-surface">{extraction.fileName ?? extraction.fileKind}</p>
+            </div>
+          </div>
+
+          {extraction.warnings.length ? (
+            <div>
+              <p className="mb-2 text-sm font-semibold text-warning">Extraction warnings</p>
+              <Lines items={extraction.warnings} />
+            </div>
+          ) : null}
+
+          <div>
+            <p className="mb-2 text-sm font-semibold text-on-surface">Detected sections</p>
+            <p className="text-sm text-on-surface-variant">
+              {extraction.detectedSections.join(' · ') || 'No common sections detected.'}
+            </p>
+          </div>
+
+          <label className="block space-y-2">
+            <span className="label">Extracted text — review and edit before analysis</span>
+            <textarea
+              className="input min-h-80 font-mono text-xs leading-5"
+              value={extraction.text}
+              onChange={(event) => {
+                setExtraction({ ...extraction, text: event.target.value });
+                setTextEdited(true);
+                markAnalysisOutdated();
+              }}
+            />
+          </label>
+          <button className="btn-primary" type="button" onClick={analyze} disabled={busy !== null}>
+            {busy === 'analyze' ? 'Analyzing CV…' : metadata ? 'Re-analyze CV' : 'Analyze CV'}
+          </button>
+        </div>
+      ) : null}
+
+      {profile && metadata ? (
+        <div className="space-y-5 border-t border-border pt-5">
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="font-semibold text-on-surface">Analysis:</span>
+            <span className="rounded-md border border-border px-2 py-1 text-on-surface-variant">
+              {metadata.provider === 'mock' ? 'Mock mode — testing output' : 'NVIDIA'}
+            </span>
+            <span className="text-on-surface-muted">{metadata.model}</span>
+            {typeof metadata.latencyMs === 'number' ? (
+              <span className="text-on-surface-muted">{metadata.latencyMs} ms</span>
+            ) : null}
+          </div>
+          {analysisOutdated ? (
+            <p className="rounded-md border border-warning/30 bg-warning-soft px-3 py-2 text-sm text-warning">
+              This profile belongs to the previous CV text. Re-analyze before saving.
+            </p>
+          ) : null}
+
+          <label className="block space-y-2">
+            <span className="label">Professional summary</span>
+            <textarea
+              className="input min-h-28"
+              value={profile.professionalSummary ?? ''}
+              onChange={(event) => setProfile({ ...profile, professionalSummary: event.target.value || undefined })}
+            />
+          </label>
           <div className="grid gap-4 sm:grid-cols-2">
-            <label className="space-y-2">
-              <span className="label">Target role</span>
-              <input className="input" value={draft.targetRole} onChange={(event) => updateDraft('targetRole', event.target.value)} />
+            {([
+              ['Full name', 'fullName'],
+              ['Email', 'email'],
+              ['Phone', 'phone'],
+              ['Location', 'location']
+            ] as const).map(([label, field]) => (
+              <label key={field} className="block space-y-2">
+                <span className="label">{label}</span>
+                <input
+                  className="input"
+                  type={field === 'email' ? 'email' : 'text'}
+                  value={profile[field] ?? ''}
+                  onChange={(event) => setProfile({ ...profile, [field]: event.target.value || undefined })}
+                />
+              </label>
+            ))}
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="block space-y-2">
+              <span className="label">Target roles</span>
+              <textarea
+                className="input min-h-24"
+                value={profile.targetRoles.join('\n')}
+                onChange={(event) => setProfile({ ...profile, targetRoles: commaValues(event.target.value) })}
+              />
             </label>
-            <label className="space-y-2">
-              <span className="label">Preferred locations</span>
-              <input className="input" value={draft.preferredLocations} onChange={(event) => updateDraft('preferredLocations', event.target.value)} />
-            </label>
-            <label className="space-y-2">
+            <label className="block space-y-2">
               <span className="label">Skills</span>
-              <input className="input" value={draft.skills} onChange={(event) => updateDraft('skills', event.target.value)} />
+              <textarea
+                className="input min-h-24"
+                value={profile.skills.join(', ')}
+                onChange={(event) => setProfile({ ...profile, skills: commaValues(event.target.value) })}
+              />
             </label>
-            <label className="space-y-2">
-              <span className="label">Languages</span>
-              <input className="input" value={draft.languages} onChange={(event) => updateDraft('languages', event.target.value)} />
+            <label className="block space-y-2">
+              <span className="label">Strengths</span>
+              <textarea
+                className="input min-h-24"
+                value={profile.strengths.join('\n')}
+                onChange={(event) => setProfile({ ...profile, strengths: commaValues(event.target.value) })}
+              />
+            </label>
+            <label className="block space-y-2">
+              <span className="label">Best-fit evidence</span>
+              <textarea
+                className="input min-h-24"
+                value={profile.bestFitBullets.join('\n')}
+                onChange={(event) => setProfile({ ...profile, bestFitBullets: commaValues(event.target.value) })}
+              />
             </label>
           </div>
 
-          <label className="space-y-2">
-            <span className="label">Experience summary</span>
-            <textarea className="input min-h-28" value={draft.experienceSummary} onChange={(event) => updateDraft('experienceSummary', event.target.value)} />
-          </label>
-
-          <label className="space-y-2">
-            <span className="label">Candidate profile for AI Generator</span>
-            <textarea className="input min-h-40" value={draft.candidateProfile} onChange={(event) => updateDraft('candidateProfile', event.target.value)} />
-          </label>
-
-          <div className="grid gap-4 lg:grid-cols-3">
-            <div className="rounded-xl border border-outline/70 bg-white p-4 shadow-card">
-              <p className="mb-3 text-sm font-black text-on-surface">Best-fit bullets</p>
-              <PillList items={draft.bestFitBullets} tone="indigo" />
+          <div className="grid gap-4 lg:grid-cols-2">
+            <div>
+              <p className="mb-2 text-sm font-semibold text-on-surface">Projects ({profile.projects.length})</p>
+              <Lines items={profile.projects.map((project) => `${project.name} — ${project.description}`)} />
             </div>
-            <div className="rounded-xl border border-outline/70 bg-white p-4 shadow-card">
-              <p className="mb-3 text-sm font-black text-on-surface">Target roles detected</p>
-              <PillList items={draft.targetRolesDetected} />
-            </div>
-            <div className="rounded-xl border border-outline/70 bg-white p-4 shadow-card">
-              <p className="mb-3 text-sm font-black text-on-surface">Missing profile warnings</p>
-              <PillList items={draft.missingProfileWarnings} tone="amber" />
+            <div>
+              <p className="mb-2 text-sm font-semibold text-on-surface">Experience ({profile.experiences.length})</p>
+              <Lines items={profile.experiences.map((experience) =>
+                [experience.role, experience.company, experience.description].filter(Boolean).join(' — ')
+              )} />
             </div>
           </div>
 
-          <label className="space-y-2">
-            <span className="label">Extracted CV text (editable before save)</span>
-            <textarea className="input min-h-72 font-mono text-xs" value={draft.cvText} onChange={(event) => updateDraft('cvText', event.target.value)} />
-          </label>
+          {profile.missingInformation.length ? (
+            <div>
+              <p className="mb-2 text-sm font-semibold text-warning">Missing or uncertain information</p>
+              <Lines items={profile.missingInformation} />
+            </div>
+          ) : null}
 
-          <button className="btn-primary" type="button" onClick={applyDraft} disabled={applying}>
-            {applying ? 'Saving context...' : 'Apply to Settings'}
+          <button className="btn-primary" type="button" onClick={save} disabled={busy !== null || analysisOutdated}>
+            {busy === 'save' ? 'Saving profile…' : 'Save structured profile'}
           </button>
         </div>
       ) : null}

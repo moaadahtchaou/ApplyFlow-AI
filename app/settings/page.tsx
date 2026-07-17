@@ -4,7 +4,6 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { ThemeSection } from '@/components/theme/ThemeSection';
 import { getAiProviderStatus } from '@/lib/ai/generate-email';
 import { getOrCreateSettings } from '@/lib/settings';
-import { Badge } from '@/components/ui/Badge';
 
 export const dynamic = 'force-dynamic';
 export const metadata = { title: 'Settings' };
@@ -33,48 +32,21 @@ export default async function SettingsPage() {
           </div>
         </div>
 
-        {/* AI Provider */}
+        <SettingsForm
+          initialSettings={{
+            aiProvider: aiStatus.provider,
+            defaultTone: settings.defaultTone,
+            defaultLanguage: settings.defaultLanguage,
+            nvidiaConfigured: aiStatus.nvidiaConfigured,
+            model: aiStatus.model,
+            mockMode: aiStatus.mockMode,
+            timeoutMs: aiStatus.timeoutMs
+          }}
+        />
+
         <div className="grid gap-6 lg:grid-cols-[1fr_0.8fr]">
-          <div className="card overflow-hidden">
-            <div className="border-b border-border px-5 py-4">
-              <h2 className="text-sm font-semibold text-on-surface">AI Provider & Defaults</h2>
-              <p className="mt-0.5 text-xs text-on-surface-muted">
-                Mock AI works offline. NVIDIA is optional and falls back safely if unavailable.
-              </p>
-            </div>
-            <div className="p-5">
-              <SettingsForm settings={settings} />
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            {/* Provider Status */}
-            <div className="card p-5">
-              <h3 className="mb-3 text-sm font-semibold text-on-surface">Provider Status</h3>
-              <div className="space-y-2.5 text-sm">
-                <div className="flex items-center justify-between">
-                  <span className="text-on-surface-variant">Active provider</span>
-                  <Badge variant="success">{aiStatus.provider}</Badge>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-on-surface-variant">NVIDIA configured</span>
-                  <Badge variant={aiStatus.nvidiaConfigured ? 'success' : 'muted'}>
-                    {aiStatus.nvidiaConfigured ? 'Yes' : 'No'}
-                  </Badge>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-on-surface-variant">Fallback mode</span>
-                  <Badge variant={aiStatus.mockMode ? 'warning' : 'muted'}>
-                    {aiStatus.mockMode ? 'Active' : 'Standby'}
-                  </Badge>
-                </div>
-                <div className="pt-1 border-t border-border-subtle">
-                  <p className="text-xs text-on-surface-muted">{aiStatus.model}</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Local Data */}
+          <div />
+          <div>
             <div className="card p-5">
               <h3 className="mb-2 text-sm font-semibold text-on-surface">Local Data</h3>
               <p className="mb-4 text-xs leading-relaxed text-on-surface-muted">
