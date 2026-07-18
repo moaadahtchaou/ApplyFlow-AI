@@ -65,7 +65,7 @@ export default async function ProfilePage() {
             </p>
           </div>
           <div className="p-5">
-            <ProfileForm settings={settings} />
+            <ProfileForm key={`profile-${settings.profileVersion}`} settings={settings} />
           </div>
         </div>
       </div>

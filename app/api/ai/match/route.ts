@@ -9,6 +9,7 @@ import { createCandidateCompanyMatch, MATCH_PROMPT_VERSION } from '@/lib/ai/matc
 import { parseStored, stableHash } from '@/lib/ai/storage';
 import { prisma } from '@/lib/prisma';
 import { getOrCreateSettings } from '@/lib/settings';
+import { determineMatchStatus } from '@/lib/ai/match-status';
 
 export const dynamic = 'force-dynamic';
 
@@ -51,10 +52,14 @@ export async function POST(request: Request) {
       additionalInstructions: input.additionalInstructions
     });
     await prisma.candidateCompanyMatch.updateMany({
-      where: { companyId: company.id, status: 'ready' },
+      where: { companyId: company.id, status: { in: ['ready', 'limited', 'failed'] } },
       data: { status: 'outdated' }
     });
-    const matchStatus = match.matchPoints.length > 0 && match.matchScore >= 5 ? 'ready' : 'needs_review';
+    const matchStatus = determineMatchStatus({
+      score: match.matchScore,
+      candidateEvidence: Boolean(match.strongestCandidateEvidence && !match.strongestCandidateEvidence.startsWith('No sufficiently')),
+      companyEvidence: match.matchPoints.length > 0
+    });
     const saved = await prisma.candidateCompanyMatch.create({
       data: {
         companyId: company.id,

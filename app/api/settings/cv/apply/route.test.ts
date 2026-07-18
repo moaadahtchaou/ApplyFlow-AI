@@ -5,6 +5,7 @@ import { candidateProfileSchema } from '@/lib/ai/contracts';
 const prismaMocks = vi.hoisted(() => ({
   failTransaction: false,
   upsert: vi.fn(),
+  findUnique: vi.fn(),
   updateMany: vi.fn(),
   createActivity: vi.fn(),
   transaction: vi.fn()
@@ -12,7 +13,7 @@ const prismaMocks = vi.hoisted(() => ({
 
 vi.mock('@/lib/prisma', () => ({
   prisma: {
-    userSettings: { upsert: prismaMocks.upsert },
+    userSettings: { upsert: prismaMocks.upsert, findUnique: prismaMocks.findUnique },
     candidateCompanyMatch: { updateMany: prismaMocks.updateMany },
     activityLog: { create: prismaMocks.createActivity },
     $transaction: prismaMocks.transaction
@@ -62,6 +63,7 @@ function request() {
 beforeEach(() => {
   prismaMocks.failTransaction = false;
   prismaMocks.upsert.mockReset().mockResolvedValue({ id: 'settings-1' });
+  prismaMocks.findUnique.mockReset().mockResolvedValue(null);
   prismaMocks.updateMany.mockReset().mockResolvedValue({ count: 0 });
   prismaMocks.createActivity.mockReset().mockResolvedValue({ id: 'activity-1' });
   prismaMocks.transaction.mockReset().mockImplementation(async (operations: Array<Promise<unknown>>) => {
@@ -75,7 +77,10 @@ describe('CV profile persistence', () => {
     const response = await POST(request());
     const payload = await response.json();
     expect(response.status).toBe(200);
-    expect(payload).toEqual({ success: true });
+    expect(payload).toMatchObject({
+      success: true,
+      profile: { fullName: 'Example Candidate' }
+    });
     expect(prismaMocks.upsert).toHaveBeenCalledWith(expect.objectContaining({
       update: expect.objectContaining({
         structuredProfile: expect.stringContaining('Example Candidate'),
@@ -101,5 +106,39 @@ describe('CV profile persistence', () => {
       }
     });
     consoleError.mockRestore();
+  });
+
+  it('does not let an invalid AI heading overwrite a manually saved name', async () => {
+    prismaMocks.findUnique.mockResolvedValue({
+      id: 'settings-1',
+      structuredProfile: JSON.stringify(candidateProfileSchema.parse({
+        fullName: 'Amine El Mansouri',
+        targetRoles: ['Backend Developer']
+      })),
+      profileManualFields: JSON.stringify(['fullName'])
+    });
+    const response = await POST(new Request('http://localhost/api/settings/cv/apply', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        extraction,
+        profile: { ...profile, fullName: 'Formation' },
+        providerMetadata: {
+          provider: 'nvidia',
+          model: 'test-model',
+          fallbackUsed: false,
+          generatedAt: new Date().toISOString()
+        },
+        promptVersion: 'cv-test'
+      })
+    }));
+    const payload = await response.json();
+    expect(response.status).toBe(200);
+    expect(payload.profile.fullName).toBe('Amine El Mansouri');
+    expect(prismaMocks.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      update: expect.objectContaining({
+        structuredProfile: expect.stringContaining('Amine El Mansouri')
+      })
+    }));
   });
 });

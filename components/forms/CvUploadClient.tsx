@@ -81,6 +81,13 @@ export function CvUploadClient({
   const [success, setSuccess] = useState('');
   const [analysisOutdated, setAnalysisOutdated] = useState(false);
   const [textEdited, setTextEdited] = useState(false);
+  const [manualFields, setManualFields] = useState<string[]>([]);
+
+  function editProfile<K extends keyof CandidateProfile>(field: K, value: CandidateProfile[K]) {
+    setProfile((current) => current ? { ...current, [field]: value } : current);
+    setManualFields((current) => current.includes(field) ? current : [...current, field]);
+    setSuccess('');
+  }
 
   function markAnalysisOutdated() {
     setAnalysisOutdated(Boolean(profile));
@@ -136,6 +143,7 @@ export function CvUploadClient({
       }
       setExtraction(payload.extraction);
       setProfile(payload.profile);
+      setManualFields([]);
       setMetadata(payload.providerMetadata);
       setPromptVersion(payload.promptVersion ?? '');
       setAnalysisOutdated(false);
@@ -167,7 +175,7 @@ export function CvUploadClient({
       const response = await fetch('/api/settings/cv/apply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ extraction, profile, providerMetadata: metadata, promptVersion })
+        body: JSON.stringify({ extraction, profile, manualFields, providerMetadata: metadata, promptVersion })
       });
       const payload = (await response.json()) as AnalyzeResponse;
       if (!response.ok) {
@@ -175,6 +183,8 @@ export function CvUploadClient({
         setAnalysisError(failure);
         return;
       }
+      if (payload.profile) setProfile(payload.profile);
+      setManualFields([]);
       setSuccess('Structured candidate profile saved. Existing company matches are now marked outdated.');
       router.refresh();
     } catch {
@@ -371,7 +381,7 @@ export function CvUploadClient({
             <textarea
               className="input min-h-28"
               value={profile.professionalSummary ?? ''}
-              onChange={(event) => setProfile({ ...profile, professionalSummary: event.target.value || undefined })}
+              onChange={(event) => editProfile('professionalSummary', event.target.value || undefined)}
             />
           </label>
           <div className="grid gap-4 sm:grid-cols-2">
@@ -387,7 +397,7 @@ export function CvUploadClient({
                   className="input"
                   type={field === 'email' ? 'email' : 'text'}
                   value={profile[field] ?? ''}
-                  onChange={(event) => setProfile({ ...profile, [field]: event.target.value || undefined })}
+                  onChange={(event) => editProfile(field, event.target.value || undefined)}
                 />
               </label>
             ))}
@@ -398,7 +408,7 @@ export function CvUploadClient({
               <textarea
                 className="input min-h-24"
                 value={profile.targetRoles.join('\n')}
-                onChange={(event) => setProfile({ ...profile, targetRoles: commaValues(event.target.value) })}
+                onChange={(event) => editProfile('targetRoles', commaValues(event.target.value))}
               />
             </label>
             <label className="block space-y-2">
@@ -406,7 +416,7 @@ export function CvUploadClient({
               <textarea
                 className="input min-h-24"
                 value={profile.skills.join(', ')}
-                onChange={(event) => setProfile({ ...profile, skills: commaValues(event.target.value) })}
+                onChange={(event) => editProfile('skills', commaValues(event.target.value))}
               />
             </label>
             <label className="block space-y-2">
@@ -414,7 +424,7 @@ export function CvUploadClient({
               <textarea
                 className="input min-h-24"
                 value={profile.strengths.join('\n')}
-                onChange={(event) => setProfile({ ...profile, strengths: commaValues(event.target.value) })}
+                onChange={(event) => editProfile('strengths', commaValues(event.target.value))}
               />
             </label>
             <label className="block space-y-2">
@@ -422,7 +432,7 @@ export function CvUploadClient({
               <textarea
                 className="input min-h-24"
                 value={profile.bestFitBullets.join('\n')}
-                onChange={(event) => setProfile({ ...profile, bestFitBullets: commaValues(event.target.value) })}
+                onChange={(event) => editProfile('bestFitBullets', commaValues(event.target.value))}
               />
             </label>
           </div>

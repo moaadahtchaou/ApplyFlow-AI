@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import type {
   CandidateCompanyMatch,
@@ -73,11 +74,12 @@ function errorMessage(error: string | ApiError | undefined, fallback: string) {
 }
 
 function Status({ status }: { status: string }) {
-  const label = status === 'ready' ? 'Ready' : status === 'analyzing' ? 'Analyzing' :
+  const label = status === 'ready' ? 'Ready' : status === 'limited' ? 'Limited' :
+    status === 'processing' || status === 'analyzing' ? 'Processing' :
     status === 'outdated' ? 'Outdated' : status === 'failed' ? 'Failed' :
-      status === 'needs_review' || status === 'insufficient_evidence' ? 'Needs evidence' : 'Not analyzed';
+      status === 'insufficient_evidence' ? 'Needs evidence' : 'Not started';
   const color = status === 'ready' ? 'text-success' : status === 'failed' ? 'text-danger' :
-    status === 'outdated' ? 'text-warning' : 'text-on-surface-muted';
+    status === 'outdated' || status === 'limited' ? 'text-warning' : 'text-on-surface-muted';
   return <span className={`text-xs font-semibold ${color}`}>{label}</span>;
 }
 
@@ -103,6 +105,7 @@ export function AiGeneratorClient({
   initialCompanyId?: string;
   initialContactId?: string;
 }) {
+  const router = useRouter();
   const [companyId, setCompanyId] = useState(initialCompanyId ?? companies[0]?.id ?? '');
   const [contactId, setContactId] = useState(initialContactId ?? '');
   const [targetRole, setTargetRole] = useState(settings.targetRole);
@@ -115,7 +118,7 @@ export function AiGeneratorClient({
   const [researchStatus, setResearchStatus] = useState('not_analyzed');
   const [match, setMatch] = useState<CandidateCompanyMatch | null>(null);
   const [matchId, setMatchId] = useState('');
-  const [matchStatus, setMatchStatus] = useState('not_analyzed');
+  const [matchStatus, setMatchStatus] = useState('not_started');
   const [generated, setGenerated] = useState<GeneratedState | null>(null);
   const [busy, setBusy] = useState<'research' | 'match' | 'generate' | 'improve' | 'save' | null>(null);
   const [error, setError] = useState('');
@@ -128,7 +131,7 @@ export function AiGeneratorClient({
     [companyId, contacts]
   );
   const pipelineReady = settings.candidateStatus === 'ready' && researchStatus === 'ready' &&
-    matchStatus === 'ready' && Boolean(match && matchId);
+    ['ready', 'limited'].includes(matchStatus) && Boolean(match && matchId);
 
   useEffect(() => {
     if (!companyId) return;
@@ -149,7 +152,7 @@ export function AiGeneratorClient({
   function invalidateMatch() {
     setMatch(null);
     setMatchId('');
-    setMatchStatus('not_analyzed');
+    setMatchStatus('not_started');
     setGenerated(null);
     setSaved(false);
   }
@@ -178,6 +181,7 @@ export function AiGeneratorClient({
 
   async function calculateMatch() {
     setBusy('match');
+    setMatchStatus('processing');
     setError('');
     setGenerated(null);
     setSaved(false);
@@ -193,8 +197,9 @@ export function AiGeneratorClient({
       }
       setMatch(payload.match);
       setMatchId(payload.matchId);
-      setMatchStatus(payload.status ?? 'needs_review');
+      setMatchStatus(payload.status ?? 'failed');
     } catch (err) {
+      setMatchStatus('failed');
       setError(err instanceof Error ? err.message : 'Could not calculate the match.');
     } finally {
       setBusy(null);
@@ -221,6 +226,7 @@ export function AiGeneratorClient({
           jobOfferText: jobOfferText || undefined,
           additionalInstructions: additionalInstructions || undefined,
           signature: signature || undefined,
+          limitedContext: matchStatus === 'limited',
           forceImprove,
           existingMessage: forceImprove && generated ? {
             subject: generated.message.subject,
@@ -260,6 +266,8 @@ export function AiGeneratorClient({
           purpose: targetRole,
           tone,
           language,
+          signature: signature || undefined,
+          messageType: jobOfferText ? 'job_application' : 'spontaneous_application',
           ...generated.message,
           evaluation: generated.evaluation
         })
@@ -267,6 +275,7 @@ export function AiGeneratorClient({
       const payload = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(payload.error ?? 'Could not save this message.');
       setSaved(true);
+      router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save this message.');
     } finally {
@@ -365,6 +374,11 @@ export function AiGeneratorClient({
       </div>
 
       <div className="card p-5">
+        {matchStatus === 'limited' ? (
+          <p className="mb-4 rounded-lg border border-warning/30 bg-warning-soft px-3 py-2 text-sm text-warning">
+            Limited match: available evidence supports only moderate personalization.
+          </p>
+        ) : null}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="font-semibold text-on-surface">Company research</p>
@@ -448,7 +462,9 @@ export function AiGeneratorClient({
             </div>
             <div className="rounded-lg border border-border p-3">
               <p className="text-xs text-on-surface-muted">Selected project or experience</p>
-              <p className="mt-1 font-semibold text-on-surface">{match.relevantProject || match.strongestCandidateEvidence}</p>
+              <p className="mt-1 font-semibold text-on-surface">
+                {match.selectedCandidateItem || match.relevantProject || match.strongestCandidateEvidence}
+              </p>
             </div>
             <div className="rounded-lg border border-border p-3 md:col-span-2">
               <p className="text-xs text-on-surface-muted">Matching angle</p>
@@ -470,17 +486,19 @@ export function AiGeneratorClient({
                 {match.missingInformation.join(' ')}
               </div>
             ) : null}
-            {match.projectRanking.length ? (
+            {match.itemRanking.length ? (
               <details className="rounded-lg border border-border p-3 md:col-span-2">
-                <summary className="cursor-pointer text-sm font-semibold text-on-surface">How projects were ranked</summary>
+                <summary className="cursor-pointer text-sm font-semibold text-on-surface">How projects and experience were ranked</summary>
                 <ol className="mt-3 divide-y divide-border-subtle">
-                  {match.projectRanking.map((project) => (
-                    <li key={project.projectName} className="py-2 text-sm">
+                  {match.itemRanking.map((item, index) => (
+                    <li key={`${item.itemType}-${item.itemName ?? item.projectName}-${index}`} className="py-2 text-sm">
                       <div className="flex justify-between gap-3">
-                        <span className="font-semibold text-on-surface">{project.projectName}</span>
-                        <span className="text-on-surface-muted">{project.score}/10</span>
+                        <span className="font-semibold text-on-surface">
+                          {item.itemName ?? item.projectName} <span className="font-normal text-on-surface-muted">· {item.itemType}</span>
+                        </span>
+                        <span className="text-on-surface-muted">{item.score}/10</span>
                       </div>
-                      <p className="mt-1 leading-5 text-on-surface-variant">{project.explanation}</p>
+                      <p className="mt-1 leading-5 text-on-surface-variant">{item.explanation}</p>
                     </li>
                   ))}
                 </ol>

@@ -441,10 +441,15 @@ export const companyResearchSchema = z.preprocess(normalizeCompanyResearchInput,
 export type CompanyResearch = z.infer<typeof companyResearchSchema>;
 
 export const projectRankingSchema = z.object({
-  projectName: z.string().trim().min(1),
+  itemName: z.string().trim().min(1).optional(),
+  itemType: z.enum(['project', 'experience']).default('project'),
+  projectName: z.string().trim().min(1).optional(),
   score: z.number().min(0).max(10),
   explanation: z.string().trim().min(1).max(1500),
-  matchedTerms: stringList(30)
+  reasons: stringList(20),
+  matchedTerms: stringList(30),
+  selectedCandidateEvidence: stringList(20),
+  selectedCompanyEvidence: stringList(20)
 });
 
 export const candidateCompanyMatchSchema = z.object({
@@ -452,7 +457,10 @@ export const candidateCompanyMatchSchema = z.object({
   companyNeedOrOpportunity: z.string().trim().min(1).max(1500),
   strongestCandidateEvidence: z.string().trim().min(1).max(1500),
   relevantProject: z.string().trim().max(300).optional(),
+  selectedCandidateItem: z.string().trim().max(300).optional(),
+  selectedCandidateItemType: z.enum(['project', 'experience']).optional(),
   projectRanking: z.array(projectRankingSchema).max(20).default([]),
+  itemRanking: z.array(projectRankingSchema).max(50).default([]),
   technologyOverlap: stringList(30),
   matchPoints: z.array(z.object({
     companyContext: z.string().trim().min(1).max(1000),

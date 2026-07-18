@@ -112,13 +112,17 @@ export function buildMessagePrompt(context: {
   request: MessageRequest;
 }) {
   const { candidate, company, match, contact, request } = context;
-  const project = candidate.projects.find((item) => item.name === match.relevantProject);
+  const project = candidate.projects.find((item) => item.name === match.selectedCandidateItem);
+  const experience = candidate.experiences.find((item) =>
+    [item.role, item.company].filter(Boolean).join(' at ') === match.selectedCandidateItem
+  );
   const compactCandidate = {
     fullName: candidate.fullName,
     headline: candidate.headline,
     targetRoles: candidate.targetRoles,
     strongestEvidence: match.strongestCandidateEvidence,
-    selectedProject: project,
+    selectedEvidence: project ?? experience,
+    selectedEvidenceType: match.selectedCandidateItemType,
     technologyOverlap: match.technologyOverlap.slice(0, 3),
     evidenceSummary: candidate.evidenceSummary.slice(0, 8)
   };

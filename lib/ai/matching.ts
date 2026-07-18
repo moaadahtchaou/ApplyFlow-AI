@@ -6,86 +6,176 @@ import {
 } from '@/lib/ai/contracts';
 import { PROMPT_VERSIONS } from '@/lib/ai/prompts';
 import { evidenceTokens } from '@/lib/ai/evidence';
+import { normalizeTechnology } from '@/lib/ai/technologies';
 
 const stopWords = new Set([
   'with', 'from', 'that', 'this', 'your', 'their', 'have', 'will', 'pour', 'avec', 'dans', 'cette',
   'company', 'entreprise', 'project', 'projet', 'application', 'developer', 'développeur',
-  'app', 'site', 'software', 'platform'
+  'app', 'site', 'software', 'platform', 'first'
 ]);
 
 function tokens(value: string) {
-  return evidenceTokens(value).filter((token) => !stopWords.has(token));
+  return evidenceTokens(value).filter((token) => token.length > 2 && !stopWords.has(token));
+}
+
+function unique(values: string[]) {
+  return [...new Set(values.filter(Boolean))];
 }
 
 function overlap(left: string, right: string) {
   const rightTokens = new Set(tokens(right));
-  return tokens(left).filter((token) => rightTokens.has(token));
+  return unique(tokens(left).filter((token) => rightTokens.has(token)));
+}
+
+function companyEvidence(company: CompanyResearch) {
+  return unique([
+    ...company.services,
+    ...company.products,
+    ...company.solutions,
+    ...company.relevantProjects,
+    ...company.personalizationHooks.map((hook) => hook.fact)
+  ]);
 }
 
 function companySearchText(company: CompanyResearch, targetRole: string) {
   return [
     company.industry,
-    ...company.services,
-    ...company.products,
-    ...company.solutions,
+    ...companyEvidence(company),
     ...company.technologiesMentioned,
-    ...company.relevantProjects,
     ...company.customerTypes,
     ...company.relevantDepartments,
-    ...company.personalizationHooks.flatMap((hook) => [hook.fact, hook.relevance, hook.sourceExcerpt]),
+    ...company.personalizationHooks.flatMap((hook) => [hook.relevance, hook.sourceExcerpt]),
     targetRole
   ].filter(Boolean).join(' ');
 }
 
-export function rankCandidateProjects(
+type RankableItem = {
+  itemName: string;
+  itemType: 'project' | 'experience';
+  text: string;
+  technologies: string[];
+  achievements: string[];
+  evidence: string[];
+};
+
+function rankableItems(candidate: CandidateProfile): RankableItem[] {
+  const projects = candidate.projects.map((project) => ({
+    itemName: project.name,
+    itemType: 'project' as const,
+    text: [project.name, project.description, project.role, ...project.features, ...project.achievements].filter(Boolean).join(' '),
+    technologies: project.technologies,
+    achievements: project.achievements,
+    evidence: unique([...project.achievements, project.description, ...project.features]).slice(0, 8)
+  }));
+  const experiences = candidate.experiences.map((experience, index) => ({
+    itemName: [experience.role, experience.company].filter(Boolean).join(' at ') || `Professional experience ${index + 1}`,
+    itemType: 'experience' as const,
+    text: [
+      experience.role,
+      experience.company,
+      experience.description,
+      ...experience.responsibilities,
+      ...experience.achievements
+    ].filter(Boolean).join(' '),
+    technologies: experience.technologies,
+    achievements: experience.achievements,
+    evidence: unique([...experience.achievements, experience.description, ...experience.responsibilities]).slice(0, 8)
+  }));
+  return [...projects, ...experiences];
+}
+
+const signals = {
+  web: /\b(web|website|frontend|backend|full.?stack|react|next|node|cms)\b/i,
+  delivery: /\b(client|customer|freelance|agency|delivered|delivery|consulting)\b/i,
+  ecommerce: /\b(e.?commerce|shopify|storefront|checkout|payment|liquid)\b/i,
+  systems: /\b(api|database|postgres|mongodb|authentication|auth|oauth|jwt|integration)\b/i
+};
+
+function signalScore(itemText: string, companyText: string, reasons: string[]) {
+  let score = 0;
+  for (const [label, pattern] of Object.entries(signals)) {
+    if (pattern.test(itemText) && pattern.test(companyText)) {
+      score += label === 'systems' ? 0.9 : 0.7;
+      reasons.push(`${label === 'systems' ? 'API, database, or authentication' : label} relevance`);
+    }
+  }
+  return score;
+}
+
+export function rankCandidateEvidence(
   candidate: CandidateProfile,
   company: CompanyResearch,
   targetRole: string
 ) {
   const companyText = companySearchText(company, targetRole);
-  return candidate.projects.map((project) => {
-    const projectText = [
-      project.name,
-      project.description,
-      project.role,
-      ...project.technologies,
-      ...project.features,
-      ...project.achievements
-    ].filter(Boolean).join(' ');
-    const matchedTerms = overlap(projectText, companyText);
-    const technologyOverlap = project.technologies.filter((technology) =>
-      companyText.toLowerCase().includes(technology.toLowerCase()) ||
-      overlap(technology, companyText).length > 0
+  const verifiedCompanyEvidence = companyEvidence(company);
+  const companyTechnologies = company.technologiesMentioned.map(normalizeTechnology);
+  return rankableItems(candidate).map((item) => {
+    const reasons: string[] = [];
+    const itemText = `${item.itemName} ${item.text} ${item.technologies.join(' ')}`;
+    const technologies = unique(item.technologies.map(normalizeTechnology).filter((technology) =>
+      companyTechnologies.some((companyTechnology) =>
+        companyTechnology.toLocaleLowerCase() === technology.toLocaleLowerCase()
+      ) || companyText.toLocaleLowerCase().includes(technology.toLocaleLowerCase())
+    ));
+    const roleTerms = overlap(itemText, targetRole);
+    const domainTerms = overlap(itemText, verifiedCompanyEvidence.join(' '));
+    const selectedCompanyEvidence = verifiedCompanyEvidence
+      .map((evidence) => ({ evidence, score: overlap(itemText, evidence).length }))
+      .filter((entry) => entry.score > 0)
+      .sort((left, right) => right.score - left.score)
+      .slice(0, 3)
+      .map((entry) => entry.evidence);
+    let score = 0;
+    if (technologies.length) {
+      score += Math.min(3, technologies.length * 1.1);
+      reasons.push(`${technologies.length} verified technology match${technologies.length === 1 ? '' : 'es'}`);
+    }
+    if (roleTerms.length) {
+      score += Math.min(1.5, roleTerms.length * 0.6);
+      reasons.push(`target-role relevance: ${roleTerms.slice(0, 4).join(', ')}`);
+    }
+    if (domainTerms.length) {
+      score += Math.min(2, domainTerms.length * 0.4);
+      reasons.push(`company service/domain relevance: ${domainTerms.slice(0, 5).join(', ')}`);
+    }
+    score += signalScore(itemText, companyText, reasons);
+    const evidenceQuality = Math.min(1.4,
+      (item.evidence.some((entry) => entry.length > 40) ? 0.5 : 0) +
+      (item.achievements.length ? 0.6 : 0) +
+      (item.technologies.length ? 0.3 : 0)
     );
-    const roleOverlap = overlap(projectText, targetRole);
-    const companyTokens = new Set(tokens(companyText));
-    const projectTokens = tokens(projectText);
-    const coverage = projectTokens.length
-      ? projectTokens.filter((token) => companyTokens.has(token)).length / Math.min(projectTokens.length, 18)
-      : 0;
-    const evidenceDepth = Math.min(1.5,
-      (project.description ? 0.4 : 0) +
-      (project.features.length ? 0.35 : 0) +
-      (project.achievements.length ? 0.5 : 0) +
-      (project.technologies.length ? 0.25 : 0)
-    );
-    const rawScore = Math.min(10,
-      coverage * 5 +
-      Math.min(3, technologyOverlap.length * 1.25) +
-      Math.min(1.5, roleOverlap.length * 0.75) +
-      evidenceDepth
-    );
-    const score = Math.round(rawScore * 10) / 10;
+    score += evidenceQuality;
+    if (evidenceQuality >= 0.8) reasons.push('concrete responsibilities or supported achievements');
+    score = Math.min(10, Math.round(score * 10) / 10);
+    const matchedTerms = unique([...technologies, ...roleTerms, ...domainTerms]).slice(0, 20);
     return {
-      projectName: project.name,
+      itemName: item.itemName,
+      itemType: item.itemType,
+      projectName: item.itemType === 'project' ? item.itemName : undefined,
       score,
-      explanation: matchedTerms.length
-        ? `Score ${score}/10: ${technologyOverlap.length} technology match(es), ${roleOverlap.length} role match(es), ` +
-          `${Math.round(coverage * 100)}% evidence-token coverage. Shared evidence: ${matchedTerms.slice(0, 8).join(', ')}.`
-        : `Score ${score}/10: no company-specific term overlap; ${evidenceDepth.toFixed(1)} points come only from project evidence quality, so it should not be forced into the message.`,
-      matchedTerms: [...new Set([...technologyOverlap, ...matchedTerms])].slice(0, 20)
+      explanation: reasons.length
+        ? `Score ${score}/10: ${reasons.join('; ')}.`
+        : `Score ${score}/10: the saved evidence has no meaningful company or target-role connection.`,
+      reasons,
+      matchedTerms,
+      selectedCandidateEvidence: item.evidence.slice(0, 4),
+      selectedCompanyEvidence
     };
   }).sort((left, right) => right.score - left.score);
+}
+
+export function rankCandidateProjects(candidate: CandidateProfile, company: CompanyResearch, targetRole: string) {
+  return rankCandidateEvidence(candidate, company, targetRole).filter((item) => item.itemType === 'project');
+}
+
+function hookSpecificity(hook: CompanyResearch['personalizationHooks'][number], company: CompanyResearch, candidateText: string) {
+  const serviceText = [...company.services, ...company.products, ...company.solutions].join(' ');
+  const hookText = `${hook.fact} ${hook.relevance}`;
+  const serviceOverlap = overlap(hookText, serviceText).length;
+  const candidateOverlap = overlap(hookText, candidateText).length;
+  const broadPenalty = /\b(offshore|leading|innovative|global|international|positioning)\b/i.test(hook.fact) ? 1 : 0;
+  return serviceOverlap * 2 + candidateOverlap - broadPenalty;
 }
 
 export function createCandidateCompanyMatch(input: {
@@ -97,65 +187,50 @@ export function createCandidateCompanyMatch(input: {
   additionalInstructions?: string;
 }): CandidateCompanyMatch {
   const { candidate, company, targetRole } = input;
-  const projectRanking = rankCandidateProjects(candidate, company, targetRole);
-  const selectedRanking = projectRanking[0]?.score >= 3.5 ? projectRanking[0] : undefined;
-  const project = selectedRanking
-    ? candidate.projects.find((item) => item.name === selectedRanking.projectName)
+  const itemRanking = rankCandidateEvidence(candidate, company, targetRole);
+  const selected = itemRanking[0]?.score > 0 ? itemRanking[0] : undefined;
+  const selectedItem = selected
+    ? rankableItems(candidate).find((item) => item.itemName === selected.itemName && item.itemType === selected.itemType)
     : undefined;
-  const experience = candidate.experiences.find((item) => item.achievements.length || item.description);
-  const hook = [...company.personalizationHooks].sort((left, right) => {
-    const leftScore = overlap(`${left.fact} ${left.relevance}`, project
-      ? `${project.name} ${project.description} ${project.technologies.join(' ')}`
-      : candidate.technicalSkills.join(' ')).length;
-    const rightScore = overlap(`${right.fact} ${right.relevance}`, project
-      ? `${project.name} ${project.description} ${project.technologies.join(' ')}`
-      : candidate.technicalSkills.join(' ')).length;
-    return rightScore - leftScore;
-  })[0];
-  const candidateEvidence =
-    project?.achievements[0] ||
-    project?.description ||
-    experience?.achievements[0] ||
-    experience?.description ||
+  const candidateText = selectedItem?.text ?? candidate.technicalSkills.join(' ');
+  const hook = [...company.personalizationHooks]
+    .sort((left, right) => hookSpecificity(right, company, candidateText) - hookSpecificity(left, company, candidateText))[0];
+  const candidateEvidence = selected?.selectedCandidateEvidence[0] ||
     candidate.bestFitBullets[0] ||
     candidate.evidenceSummary[0] ||
     '';
-  const candidateTech = new Map(candidate.technicalSkills.map((skill) => [skill.toLowerCase(), skill]));
-  const companyTech = company.technologiesMentioned.map((technology) => technology.toLowerCase());
-  const technologyOverlap = [...candidateTech.entries()]
-    .filter(([key]) => companyTech.some((technology) => technology.includes(key) || key.includes(technology)))
-    .map(([, value]) => value)
-    .slice(0, 10);
+  const technologyOverlap = selected?.matchedTerms.filter((term) =>
+    itemRanking.some((item) => item.matchedTerms.includes(term))
+  ).slice(0, 10) ?? [];
   const missingInformation: string[] = [];
   if (!hook) missingInformation.push('Company research has no verified personalization hook.');
   if (!candidateEvidence) missingInformation.push('The candidate profile has no concrete project or experience evidence.');
-  if (!selectedRanking && candidate.projects.length) missingInformation.push('No candidate project has a strong enough evidence-based match.');
   if (!input.jobOfferText) missingInformation.push('No job offer was supplied; this must remain a spontaneous application.');
   const matchPoints = hook && candidateEvidence ? [{
     companyContext: hook.fact,
     candidateEvidence,
-    connection: project
-      ? `${project.name} is the strongest available project for discussing a possible contribution related to this verified company context.`
-      : 'This candidate experience is the strongest available evidence for discussing a possible contribution.',
+    connection: `${selected?.itemName ?? 'The strongest candidate evidence'} is the highest-ranked saved evidence for this verified company context.`,
     sourceUrl: hook.sourceUrl
   }] : [];
-  const baseScore = (selectedRanking?.score ?? 0) * 0.6 + (hook ? 2 : 0) + (candidateEvidence ? 1.5 : 0);
-  const matchScore = Math.max(0, Math.min(10, Math.round(baseScore * 10) / 10));
-  const companyNeedOrOpportunity = hook
-    ? `Potential contribution area inferred from this verified company fact: ${hook.fact}`
-    : 'No company opportunity can be stated reliably from the available research.';
-  const strongestAngle = matchPoints[0]?.connection ??
-    'Evidence is too limited for a strong personalized angle; collect more company or candidate detail first.';
+  const matchScore = Math.max(0, Math.min(10, Math.round((
+    (selected?.score ?? 0) * 0.7 + (hook ? 1.5 : 0) + (candidateEvidence ? 0.8 : 0)
+  ) * 10) / 10));
 
   return candidateCompanyMatchSchema.parse({
     recommendedTargetRole: targetRole || candidate.targetRoles[0] || 'Relevant software role',
-    companyNeedOrOpportunity,
+    companyNeedOrOpportunity: hook
+      ? `Potential contribution area inferred from this verified company fact: ${hook.fact}`
+      : 'No company opportunity can be stated reliably from the available research.',
     strongestCandidateEvidence: candidateEvidence || 'No sufficiently concrete candidate evidence available.',
-    relevantProject: project?.name,
-    projectRanking,
+    relevantProject: selected?.itemType === 'project' ? selected.itemName : undefined,
+    selectedCandidateItem: selected?.itemName,
+    selectedCandidateItemType: selected?.itemType,
+    projectRanking: itemRanking.filter((item) => item.itemType === 'project'),
+    itemRanking,
     technologyOverlap,
     matchPoints,
-    strongestAngle,
+    strongestAngle: matchPoints[0]?.connection ??
+      'Evidence is too limited for a strong personalized angle; collect more company or candidate detail first.',
     secondaryAngle: input.additionalInstructions?.trim() || undefined,
     risks: [
       ...(hook ? [] : ['Company-specific wording would be weak without a verified hook.']),

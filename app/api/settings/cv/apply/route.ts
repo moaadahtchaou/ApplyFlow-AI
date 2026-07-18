@@ -6,8 +6,9 @@ import {
   candidateProfileSchema,
   cvExtractionResultSchema
 } from '@/lib/ai/contracts';
-import { stableHash } from '@/lib/ai/storage';
+import { parseStored, stableHash } from '@/lib/ai/storage';
 import { prisma } from '@/lib/prisma';
+import { mergeCanonicalCandidateProfile, parseManualFields } from '@/lib/ai/candidate-profile';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -15,6 +16,7 @@ export const dynamic = 'force-dynamic';
 const applySchema = z.object({
   extraction: cvExtractionResultSchema,
   profile: candidateProfileSchema,
+  manualFields: z.array(z.string().trim().min(1).max(100)).max(30).default([]),
   providerMetadata: aiExecutionMetadataSchema,
   promptVersion: z.string().trim().min(1).max(100)
 });
@@ -22,7 +24,17 @@ const applySchema = z.object({
 export async function POST(request: Request) {
   try {
     const input = applySchema.parse(await request.json());
-    const profile = input.profile;
+    const previous = await prisma.userSettings.findUnique({ where: { singletonKey: 'default' } });
+    const previousProfile = previous
+      ? parseStored(candidateProfileSchema, previous.structuredProfile)
+      : null;
+    const previousManualFields = parseManualFields(previous?.profileManualFields);
+    const manualFields = new Set([...previousManualFields, ...input.manualFields]);
+    const profile = mergeCanonicalCandidateProfile({
+      saved: previousProfile,
+      incoming: input.profile,
+      manualFields: input.manualFields
+    });
     const experienceSummary = profile.experiences.map((item) => item.description).filter(Boolean).join(' ').slice(0, 3000);
     const candidateProfile = profile.professionalSummary || profile.evidenceSummary.join(' ');
     const update = {
@@ -38,6 +50,7 @@ export async function POST(request: Request) {
       languages: profile.languages.map((item) => [item.language, item.level].filter(Boolean).join(' — ')).join(', '),
       preferredLocations: profile.preferredLocations.join(', '),
       structuredProfile: JSON.stringify(profile),
+      profileManualFields: JSON.stringify([...manualFields]),
       cvExtractionData: JSON.stringify(input.extraction),
       cvAnalysisStatus: 'ready',
       cvAnalysisVersion: input.promptVersion,
@@ -49,7 +62,7 @@ export async function POST(request: Request) {
       cvAnalyzedAt: new Date(input.providerMetadata.generatedAt),
       profileVersion: { increment: 1 }
     };
-    await prisma.$transaction([
+    const [savedSettings] = await prisma.$transaction([
       prisma.userSettings.upsert({
         where: { singletonKey: 'default' },
         update,
@@ -74,7 +87,20 @@ export async function POST(request: Request) {
     ]);
     revalidatePath('/profile');
     revalidatePath('/ai-generator');
-    return NextResponse.json({ success: true });
+    return NextResponse.json({
+      success: true,
+      profile,
+      settings: {
+        fullName: savedSettings.fullName,
+        email: savedSettings.email,
+        phone: savedSettings.phone,
+        location: savedSettings.location,
+        targetRole: savedSettings.targetRole,
+        skills: savedSettings.skills,
+        candidateProfile: savedSettings.candidateProfile,
+        profileVersion: savedSettings.profileVersion
+      }
+    });
   } catch (error) {
     const validation = error instanceof z.ZodError;
     console.error('CV profile apply failed', {

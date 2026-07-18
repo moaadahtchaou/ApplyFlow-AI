@@ -4,7 +4,8 @@ import {
   companyResearchSchema,
   generatedApplicationMessageSchema
 } from './contracts';
-import { createCandidateCompanyMatch, rankCandidateProjects } from './matching';
+import { createCandidateCompanyMatch, rankCandidateEvidence, rankCandidateProjects } from './matching';
+import { determineMatchStatus } from './match-status';
 import { evaluateMessageQuality, needsAutomaticRewrite } from './quality';
 import { runMessagePipeline } from './message-pipeline';
 
@@ -101,6 +102,42 @@ describe('matching and quality evaluation', () => {
     expect(match.companyNeedOrOpportunity.toLowerCase()).not.toContain('vacancy');
   });
 
+  it('returns limited for a low score with usable evidence', () => {
+    expect(determineMatchStatus({
+      score: 3.8,
+      candidateEvidence: true,
+      companyEvidence: true
+    })).toBe('limited');
+  });
+
+  it('ranks relevant professional delivery experience alongside projects', () => {
+    const withExperience = candidateProfileSchema.parse({
+      ...candidate,
+      experiences: [{
+        role: 'Web Developer',
+        company: 'Client Services Agency',
+        description: 'Delivered custom websites and e-commerce storefronts for agency clients.',
+        responsibilities: ['Integrated APIs, authentication, and PostgreSQL databases.'],
+        achievements: ['Delivered production websites for multiple clients.'],
+        technologies: ['TypeScript', 'PostgreSQL']
+      }]
+    });
+    const agency = companyResearchSchema.parse({
+      ...research,
+      services: ['Custom website development', 'E-commerce solutions'],
+      personalizationHooks: [{
+        fact: 'The agency delivers custom websites and e-commerce solutions for clients.',
+        relevance: 'Relevant to professional web delivery.',
+        sourceUrl: 'https://acme.example/services'
+      }]
+    });
+    const ranking = rankCandidateEvidence(withExperience, agency, 'Web Developer');
+    expect(ranking.some((item) => item.itemType === 'experience')).toBe(true);
+    expect(ranking[0].reasons.length).toBeGreaterThan(0);
+    expect(ranking[0].selectedCandidateEvidence.length).toBeGreaterThan(0);
+    expect(ranking[0].selectedCompanyEvidence.length).toBeGreaterThan(0);
+  });
+
   it('scores a generic message below a company-specific evidence-based message', () => {
     const metadata = { provider: 'mock' as const, model: 'deterministic-local', fallbackUsed: false, generatedAt: new Date().toISOString() };
     const generic = generatedApplicationMessageSchema.parse({
@@ -130,6 +167,24 @@ describe('matching and quality evaluation', () => {
     expect(genericScore.overallScore).toBeLessThan(specificScore.overallScore);
     expect(genericScore.hasInventedFacts).toBe(true);
     expect(needsAutomaticRewrite(genericScore)).toBe(true);
+  });
+
+  it('does not warn when the subject and body contain exactly three technologies', () => {
+    const metadata = { provider: 'mock' as const, model: 'deterministic-local', fallbackUsed: false, generatedAt: new Date().toISOString() };
+    const message = generatedApplicationMessageSchema.parse({
+      subject: 'TypeScript application',
+      body: 'Hello Acme Hiring team, your recruitment workflow software supports recruiting teams. This connects with my Recruitment Workflow project, where I delivered a concrete workflow using TypeScript, Next.js, and Prisma. I could contribute that documented experience to related product work without assuming an open role. This is a spontaneous application. Would you be open to a short conversation about whether this experience could support your team? Best regards',
+      companyFactUsed: research.personalizationHooks[0].fact,
+      companyFactSourceUrl: research.personalizationHooks[0].sourceUrl,
+      candidateEvidenceUsed: candidate.projects[0].description,
+      selectedProject: candidate.projects[0].name,
+      matchingAngle: 'Recruitment workflow alignment',
+      providerMetadata: metadata,
+      promptVersion: 'test-v1',
+      automaticRewriteUsed: false
+    });
+    const evaluation = evaluateMessageQuality({ message, candidate, company: research, hasJobOffer: false });
+    expect(evaluation.problems.some((problem) => problem.includes('technologies'))).toBe(false);
   });
 
   it('generates and evaluates a verified mock message with explicit provider metadata', async () => {

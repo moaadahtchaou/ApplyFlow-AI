@@ -7,6 +7,8 @@ import {
 import { executeStructured, type ProviderConfig } from '@/lib/ai/provider';
 import { buildCvStructurePrompt, JSON_ONLY_SYSTEM_PROMPT, PROMPT_VERSIONS } from '@/lib/ai/prompts';
 import { isEvidenceSupported } from '@/lib/ai/evidence';
+import { isValidPersonName, selectLikelyFullName } from '@/lib/ai/person-name';
+import { sanitizeCandidateName } from '@/lib/ai/candidate-profile';
 
 const technicalVocabulary = [
   'TypeScript', 'JavaScript', 'React', 'React Native', 'Next.js', 'Node.js', 'Express', 'NestJS',
@@ -68,10 +70,7 @@ export function contactFacts(text: string) {
   )?.replace(/^[^:\-]+[:\-]\s*/, '').trim();
   const knownLocation = ['Casablanca', 'Rabat', 'Marrakech', 'Tangier', 'Tanger', 'Agadir', 'Morocco', 'Maroc']
     .find((place) => new RegExp(`\\b${place}\\b`, 'i').test(text));
-  const fullName = lines.slice(0, 12).find((line) =>
-    /^[\p{L}][\p{L}\s.'-]{2,79}$/u.test(line) &&
-    !/^(cv|resume|curriculum|profile|summary|contact|developer|engineer|designer|skills?)$/i.test(line)
-  );
+  const fullName = selectLikelyFullName(lines.slice(0, 16));
   return { fullName, email, phone, location: explicitLocation || knownLocation };
 }
 
@@ -103,15 +102,15 @@ export function reconcileCandidateProfileWithSource(profile: CandidateProfile, s
     ...technicalSkills,
     ...profile.softSkills.filter((skill) => !hobbyPattern.test(skill))
   ], 100);
-  const reconciled = candidateProfileSchema.parse({
+  const reconciled = sanitizeCandidateName(candidateProfileSchema.parse({
     ...profile,
-    fullName: contact.fullName ?? profile.fullName,
+    fullName: contact.fullName ?? (isValidPersonName(profile.fullName) ? profile.fullName : undefined),
     email: contact.email ?? profile.email,
     phone: contact.phone ?? profile.phone,
     location: contact.location ?? profile.location,
     skills: professionalSkills,
     technicalSkills
-  });
+  }));
   const fallbackEvidence = concreteEvidence(reconciled, technicalSkills);
   const strengthsNeedRepair = reconciled.strengths.some((item) =>
     /^technical stack documented/i.test(item)
@@ -156,7 +155,7 @@ function mockCandidateProfile(extraction: CVExtractionResult): CandidateProfile 
     .filter((language) => new RegExp(`\\b${language}\\b`, 'i').test(text));
   const detectedLocations = ['Casablanca', 'Rabat', 'Marrakech', 'Tangier', 'Tanger', 'Agadir', 'Morocco', 'Maroc', 'Remote']
     .filter((location) => new RegExp(`\\b${location}\\b`, 'i').test(text));
-  const likelyName = lines[0] && /^[\p{L}\s.'-]{3,80}$/u.test(lines[0]) ? lines[0] : undefined;
+  const likelyName = selectLikelyFullName(lines.slice(0, 16));
   const contact = contactFacts(text);
   const projects = projectLines.length ? [{
     name: projectLines.find((line) => !/^[•\-–]/.test(line))?.slice(0, 300) || 'CV project',
@@ -252,7 +251,11 @@ export async function analyzeCandidateProfile(
   ), 50);
   const sanitized = candidateProfileSchema.parse({
     ...execution.data,
-    fullName: contact.fullName ?? (execution.data.fullName && supported(execution.data.fullName, 0.45) ? execution.data.fullName : undefined),
+    fullName: contact.fullName ?? (
+      isValidPersonName(execution.data.fullName) && supported(execution.data.fullName, 0.45)
+        ? execution.data.fullName
+        : undefined
+    ),
     email: contact.email ?? execution.data.email,
     phone: contact.phone ?? execution.data.phone,
     location: contact.location ?? (execution.data.location && supported(execution.data.location, 0.45) ? execution.data.location : undefined),
@@ -309,6 +312,9 @@ export async function analyzeCandidateProfile(
     evidenceSummary: supportedItems(execution.data.evidenceSummary, 0.2),
     missingInformation: unique([
       ...execution.data.missingInformation,
+      ...(contact.fullName || (isValidPersonName(execution.data.fullName) && supported(execution.data.fullName, 0.45))
+        ? []
+        : ['Candidate full name was not found or could not be validated.']),
       ...(execution.metadata.provider === 'nvidia'
         ? ['AI-extracted claims that could not be traced to the CV text were removed.']
         : [])

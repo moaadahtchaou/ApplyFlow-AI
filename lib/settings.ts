@@ -1,7 +1,5 @@
 import { prisma } from '@/lib/prisma';
 import { getProviderStatus } from '@/lib/ai/provider';
-import { candidateProfileSchema } from '@/lib/ai/contracts';
-import { reconcileCandidateProfileWithSource } from '@/lib/ai/cv-analysis';
 
 const MASKED_KEY_PATTERN = /^[•*.\s]+(?:\(saved\))?$/i;
 
@@ -10,42 +8,7 @@ export async function getOrCreateSettings() {
     where: { singletonKey: 'default' }
   });
 
-  if (existing) {
-    if (existing.structuredProfile && existing.cvText) {
-      try {
-        const parsed = candidateProfileSchema.parse(JSON.parse(existing.structuredProfile));
-        const reconciled = reconcileCandidateProfileWithSource(parsed, existing.cvText);
-        const structuredProfile = JSON.stringify(reconciled);
-        const synchronized = {
-          structuredProfile,
-          fullName: reconciled.fullName ?? '',
-          email: reconciled.email ?? '',
-          phone: reconciled.phone ?? '',
-          location: reconciled.location ?? '',
-          skills: reconciled.skills.join(', '),
-          targetRole: reconciled.targetRoles[0] ?? '',
-          candidateProfile: reconciled.professionalSummary || reconciled.evidenceSummary.join(' ')
-        };
-        const changed = structuredProfile !== existing.structuredProfile ||
-          Object.entries(synchronized).some(([key, value]) =>
-            existing[key as keyof typeof existing] !== value
-          );
-        if (changed) {
-          const [updated] = await prisma.$transaction([
-            prisma.userSettings.update({
-              where: { id: existing.id },
-              data: { ...synchronized, profileVersion: { increment: 1 } }
-            }),
-            prisma.candidateCompanyMatch.updateMany({ data: { status: 'outdated' } })
-          ]);
-          return updated;
-        }
-      } catch {
-        // Keep the last saved values; invalid stored JSON remains visible for manual recovery.
-      }
-    }
-    return existing;
-  }
+  if (existing) return existing;
 
   return prisma.userSettings.create({
     data: {

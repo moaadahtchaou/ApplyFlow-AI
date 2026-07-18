@@ -30,7 +30,7 @@ export async function POST(request: Request) {
     const candidate = parseStored(candidateProfileSchema, settings.structuredProfile);
     const research = parseStored(companyResearchSchema, company.researchData);
     const match = savedMatch ? parseStored(candidateCompanyMatchSchema, savedMatch.matchData) : null;
-    if (!candidate || !research || !match || savedMatch?.status !== 'ready' || savedMatch.companyId !== company.id) {
+    if (!candidate || !research || !match || !['ready', 'limited'].includes(savedMatch?.status ?? '') || savedMatch?.companyId !== company.id) {
       return NextResponse.json({
         error: 'A current candidate profile, company analysis, and calculated match are required before generation.',
         code: 'PIPELINE_NOT_READY'

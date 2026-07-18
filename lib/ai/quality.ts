@@ -6,6 +6,7 @@ import {
   type MessageQualityEvaluation
 } from '@/lib/ai/contracts';
 import { isEvidenceSupported } from '@/lib/ai/evidence';
+import { configuredTechnologyLimit, extractTechnologies } from '@/lib/ai/technologies';
 
 const genericPatterns = [
   /prestigious company/gi,
@@ -48,9 +49,8 @@ export function evaluateMessageQuality(input: {
   const hasInventedFacts = !usesVerifiedCompanyFact || !usesCandidateEvidence || impliesVacancy;
   const genericPhraseCount = genericPatterns.reduce((total, pattern) => total + (body.match(pattern)?.length ?? 0), 0);
   const wordCount = body.trim().split(/\s+/).filter(Boolean).length;
-  const technologyCount = [...new Set(
-    candidate.technicalSkills.filter((skill) => body.toLowerCase().includes(skill.toLowerCase()))
-  )].length;
+  const technologyCount = extractTechnologies(message.subject, body, candidate.technicalSkills).length;
+  const technologyLimit = configuredTechnologyLimit();
   const treatsSpontaneousApplicationCorrectly = hasJobOffer ||
     /\b(spontaneous|unsolicited|candidature spontan[ée]e|proactively|initiative|طلب ترشيح تلقائي)\b/i.test(body);
 
@@ -61,13 +61,15 @@ export function evaluateMessageQuality(input: {
   if (!relationshipIsClear) problems.push('The company-candidate relationship is unclear.');
   if (impliesVacancy) problems.push('The message implies a vacancy even though no job offer was supplied.');
   if (genericPhraseCount) problems.push(`${genericPhraseCount} generic phrase(s) should be removed.`);
-  if (technologyCount > 3) problems.push('More than three technologies are listed without a specific reason.');
+  if (technologyCount > technologyLimit) {
+    problems.push(`More than ${technologyLimit} technologies are listed without a specific reason.`);
+  }
   if (wordCount > 190) problems.push('The introduction or message is too long.');
   if (wordCount < 75) problems.push('The message is too short to establish a credible connection.');
 
   const personalizationScore = Math.max(0, Math.min(10, (companySpecific ? 5 : 1) + (relationshipIsClear ? 3 : 0) + (genericPhraseCount ? 0 : 2)));
   const evidenceScore = Math.max(0, Math.min(10, (usesVerifiedCompanyFact ? 4 : 0) + (usesCandidateEvidence ? 4 : 0) + (hasInventedFacts ? 0 : 2)));
-  const naturalnessScore = Math.max(0, Math.min(10, 9 - genericPhraseCount * 2 - (wordCount > 190 ? 2 : 0) - (technologyCount > 3 ? 2 : 0)));
+  const naturalnessScore = Math.max(0, Math.min(10, 9 - genericPhraseCount * 2 - (wordCount > 190 ? 2 : 0) - (technologyCount > technologyLimit ? 2 : 0)));
   const clarityScore = Math.max(0, Math.min(10, 6 + (relationshipIsClear ? 2 : 0) + (wordCount >= 75 && wordCount <= 190 ? 2 : 0)));
   const overallScore = Math.round(
     (personalizationScore * 0.3 + evidenceScore * 0.35 + naturalnessScore * 0.2 + clarityScore * 0.15) * 10

@@ -10,6 +10,8 @@ export const generatedMessageSchema = z.object({
   contactId: z.string().trim().optional(),
   matchId: z.string().trim().min(1),
   purpose: z.string().trim().min(2).max(300),
+  signature: z.string().trim().max(2000).optional(),
+  messageType: z.string().trim().min(1).max(100).default('spontaneous_application'),
   tone: z.enum(tones),
   language: z.enum(messageLanguages),
   subject: z.string().trim().min(1).max(300),

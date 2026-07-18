@@ -4,8 +4,8 @@ import { Badge } from '@/components/ui/Badge';
 import { getAiProviderStatus } from '@/lib/ai/generate-email';
 import { prisma } from '@/lib/prisma';
 import { getOrCreateSettings } from '@/lib/settings';
-import { formatDate } from '@/lib/utils';
 import Link from 'next/link';
+import { SavedMessageHistory } from '@/components/messages/SavedMessageHistory';
 
 export const metadata = { title: 'AI Generator' };
 
@@ -41,9 +41,18 @@ export default async function AiGeneratorPage({
     candidateAnalyzedAt: settings.cvAnalyzedAt?.toISOString() ?? null
   };
   const recentMessages = await prisma.generatedMessage.findMany({
+    where: { ownerSettingsId: settings.id },
     orderBy: { createdAt: 'desc' },
-    take: 6,
-    include: { company: true }
+    take: 100,
+    select: {
+      id: true,
+      subject: true,
+      companyNameSnapshot: true,
+      purpose: true,
+      language: true,
+      qualityScore: true,
+      createdAt: true
+    }
   });
   const initialCompanyId = companies.some((c) => c.id === params.companyId) ? params.companyId : undefined;
   const initialContact = contacts.find((c) => c.id === params.contactId);
@@ -84,31 +93,15 @@ export default async function AiGeneratorPage({
         initialContactId={initialContactId}
       />
 
-      {/* Saved history */}
-      {recentMessages.length > 0 && (
-        <div className="mt-8">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-on-surface">Saved Message History</h2>
-            <span className="text-xs text-on-surface-muted">{recentMessages.length} saved</span>
-          </div>
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {recentMessages.map((message) => (
-              <div key={message.id} className="card p-4">
-                <p className="truncate font-semibold text-on-surface">{message.subject}</p>
-                <div className="mt-1 flex flex-wrap gap-1">
-                  <Badge variant="muted">{message.purpose}</Badge>
-                  <Badge variant="muted">{message.language}</Badge>
-                  {message.qualityScore !== null && <Badge variant="success">{message.qualityScore}/10</Badge>}
-                  {message.company && (
-                    <Badge variant="primary">{message.company.name}</Badge>
-                  )}
-                </div>
-                <p className="mt-2 text-xs text-on-surface-muted">{formatDate(message.createdAt)}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      <SavedMessageHistory key={recentMessages.map((message) => message.id).join(':')} initialMessages={recentMessages.map((message) => ({
+        id: message.id,
+        subject: message.subject,
+        companyName: message.companyNameSnapshot ?? 'Company unavailable',
+        targetRole: message.purpose,
+        language: message.language,
+        qualityScore: message.qualityScore,
+        createdAt: message.createdAt.toISOString()
+      }))} />
     </div>
   );
 }

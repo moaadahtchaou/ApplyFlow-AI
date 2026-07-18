@@ -42,32 +42,33 @@ function mockMessage(context: Context) {
   const isArabic = request.language === 'Arabic';
   const isDarija = request.language === 'Darija';
   const spontaneous = !request.jobOfferText;
+  const selectedEvidenceName = match.selectedCandidateItem ?? match.relevantProject;
   let subject: string;
   let body: string;
 
   if (isFrench) {
     subject = `Candidature spontanée — ${request.targetRole}`;
     body = `Bonjour${name ? ` ${name}` : ''},\n\n` +
-      `Votre site présente ce point concret : ${compact(hook.fact)}. Cette activité fait écho à mon travail sur ${match.relevantProject ?? 'un projet concret'}, où ${evidence}${techSentence}.\n\n` +
+      `Votre site présente ce point concret : ${compact(hook.fact)}. Cette activité fait écho à mon expérience ${selectedEvidenceName ? `sur ${selectedEvidenceName}` : 'documentée'}, où ${evidence}${techSentence}.\n\n` +
       `Je pourrais ainsi contribuer comme ${request.targetRole} en reliant cette expérience à vos besoins réels, sans supposer l’existence d’un poste ouvert. ` +
       `${spontaneous ? 'Il s’agit d’une candidature spontanée.' : 'Ma démarche répond à l’offre transmise.'} ` +
       `Seriez-vous disponible pour un court échange afin d’évaluer la pertinence de ce profil ?\n\n${request.signature || candidate.fullName || 'Cordialement'}`;
   } else if (isArabic) {
     subject = `ترشيح تلقائي — ${request.targetRole}`;
     body = `مرحباً${name ? ` ${name}` : ''}،\n\n` +
-      `يعرض موقع ${company.companyName} هذه المعلومة المحددة: ${compact(hook.fact)}. يرتبط ذلك بخبرتي العملية في ${match.relevantProject ?? 'مشروع موثق'}، حيث ${evidence}${techSentence}.\n\n` +
+      `يعرض موقع ${company.companyName} هذه المعلومة المحددة: ${compact(hook.fact)}. يرتبط ذلك بخبرتي العملية في ${selectedEvidenceName ?? 'عمل موثق'}، حيث ${evidence}${techSentence}.\n\n` +
       `يمكنني المساهمة بصفتي ${request.targetRole} من خلال توظيف هذه الخبرة في سياق عملكم الفعلي، من دون افتراض وجود منصب شاغر. ` +
       `${spontaneous ? 'هذا ترشيح تلقائي.' : 'هذا الطلب مرتبط بنص العرض المقدم.'} هل يمكننا ترتيب محادثة قصيرة لمناقشة مدى ملاءمة هذا التعاون؟\n\n${request.signature || candidate.fullName || 'مع التحية'}`;
   } else if (isDarija) {
     subject = `Candidature spontanée — ${request.targetRole}`;
     body = `Salam${name ? ` ${name}` : ''},\n\n` +
-      `Site dyal ${company.companyName} kaybayan had l-ma3louma: ${compact(hook.fact)}. Hada kaytla9a m3a l-khedma dyali f ${match.relevantProject ?? 'projet موثق'}, fin ${evidence}${techSentence}.\n\n` +
+      `Site dyal ${company.companyName} kaybayan had l-ma3louma: ${compact(hook.fact)}. Hada kaytla9a m3a l-khedma dyali f ${selectedEvidenceName ?? 'khedma موثقة'}, fin ${evidence}${techSentence}.\n\n` +
       `N9der nساهم كـ ${request.targetRole} b had التجربة f السياق الحقيقي dyal khdemtkom, bla ma نفترض belli kayn poste محلول. ` +
       `${spontaneous ? 'Hadi candidature spontanée.' : 'Had الطلب مرتبط بالعرض اللي تعطي.'} واش ممكن نديرو مكالمة قصيرة باش نشوفو واش profil مناسب؟\n\n${request.signature || candidate.fullName || 'Chokran'}`;
   } else {
     subject = `Spontaneous application — ${request.targetRole}`;
     body = `Hello${name ? ` ${name}` : ''},\n\n` +
-      `${company.companyName}'s website highlights this specific point: ${compact(hook.fact)}. It connects directly with my work on ${match.relevantProject ?? 'a documented project'}, where ${evidence}${techSentence}.\n\n` +
+      `${company.companyName}'s website highlights this specific point: ${compact(hook.fact)}. It connects directly with my documented work${selectedEvidenceName ? ` on ${selectedEvidenceName}` : ''}, where ${evidence}${techSentence}.\n\n` +
       `I could contribute as a ${request.targetRole} by applying that experience to your actual work, without assuming that a role is currently open. ` +
       `${spontaneous ? 'This is a spontaneous application.' : 'I am responding to the supplied job description.'} ` +
       `Would you be open to a short conversation to see whether this background could be useful to your team?\n\n${request.signature || candidate.fullName || 'Best regards'}`;
@@ -78,7 +79,7 @@ function mockMessage(context: Context) {
     companyFactUsed: hook.fact,
     companyFactSourceUrl: hook.sourceUrl,
     candidateEvidenceUsed: evidence,
-    selectedProject: match.relevantProject,
+    selectedProject: selectedEvidenceName,
     matchingAngle: match.strongestAngle
   });
 }
@@ -136,7 +137,7 @@ async function generateOnce(
     companyFactUsed: hook?.fact ?? message.companyFactUsed,
     companyFactSourceUrl: hook?.sourceUrl ?? message.companyFactSourceUrl,
     candidateEvidenceUsed: context.match.strongestCandidateEvidence,
-    selectedProject: context.match.relevantProject
+    selectedProject: context.match.selectedCandidateItem ?? context.match.relevantProject
   });
 }
 
