@@ -2,12 +2,29 @@ import { CvUploadClient } from '@/components/forms/CvUploadClient';
 import { ProfileForm } from '@/components/forms/ProfileForm';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { getOrCreateSettings } from '@/lib/settings';
+import {
+  aiExecutionMetadataSchema,
+  candidateProfileSchema,
+  cvExtractionResultSchema
+} from '@/lib/ai/contracts';
+import { parseStored } from '@/lib/ai/storage';
+import { getAiProviderStatus } from '@/lib/ai/generate-email';
 
 export const dynamic = 'force-dynamic';
 export const metadata = { title: 'Profile / CV' };
 
 export default async function ProfilePage() {
-  const settings = await getOrCreateSettings();
+  const [settings, providerStatus] = await Promise.all([getOrCreateSettings(), getAiProviderStatus()]);
+  const extraction = parseStored(cvExtractionResultSchema, settings.cvExtractionData);
+  const profile = parseStored(candidateProfileSchema, settings.structuredProfile);
+  const metadata = settings.cvAnalysisProvider ? aiExecutionMetadataSchema.safeParse({
+    provider: settings.cvAnalysisProvider,
+    model: settings.cvAnalysisModel ?? undefined,
+    fallbackUsed: false,
+    generatedAt: settings.cvAnalyzedAt?.toISOString() ?? new Date().toISOString(),
+    latencyMs: settings.cvAnalysisLatencyMs ?? undefined,
+    requestId: settings.cvAnalysisRequestId ?? undefined
+  }) : null;
 
   return (
     <div>
@@ -27,7 +44,14 @@ export default async function ProfilePage() {
               </p>
             </div>
             <div className="p-5">
-              <CvUploadClient />
+              <CvUploadClient
+                initialExtraction={extraction}
+                initialProfile={profile}
+                initialMetadata={metadata?.success ? metadata.data : null}
+                initialPromptVersion={settings.cvAnalysisVersion}
+                activeProvider={providerStatus.provider}
+                activeModel={providerStatus.provider === 'mock' ? 'deterministic-local' : providerStatus.model}
+              />
             </div>
           </div>
         </div>
@@ -41,7 +65,7 @@ export default async function ProfilePage() {
             </p>
           </div>
           <div className="p-5">
-            <ProfileForm settings={settings} />
+            <ProfileForm key={`profile-${settings.profileVersion}`} settings={settings} />
           </div>
         </div>
       </div>

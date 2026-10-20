@@ -8,71 +8,85 @@ datasource db {
 }
 
 model Company {
-  id                String             @id @default(cuid())
-  name              String
-  website           String?
-  email             String?
-  phone             String?
-  linkedinUrl       String?
-  industry          String?
-  location          String?
-  city              String?
-  notes             String?
-  status            String             @default("new")
-  sourceUrl         String?
-  sourceType        String?
-  rating            Float?
-  reviewCount       Int?
-  latitude          Float?
-  longitude         Float?
-  leadFingerprint   String?            @unique
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
-  contacts          Contact[]
-  generatedMessages GeneratedMessage[]
-  leads             Lead[]
+  id                   String                  @id @default(cuid())
+  name                 String
+  website              String?
+  email                String?
+  phone                String?
+  linkedinUrl          String?
+  industry             String?
+  location             String?
+  city                 String?
+  notes                String?
+  status               String                  @default("new")
+  sourceUrl            String?
+  sourceType           String?
+  rating               Float?
+  reviewCount          Int?
+  latitude             Float?
+  longitude            Float?
+  leadFingerprint      String?                 @unique
+  createdAt            DateTime                @default(now())
+  updatedAt            DateTime                @updatedAt
+  contacts             Contact[]
+  generatedMessages    GeneratedMessage[]
+  leads                Lead[]
+  researchData         String                  @default("")
+  researchWarnings     String                  @default("")
+  researchStatus       String                  @default("not_analyzed")
+  researchVersion      String?
+  researchProvider     String?
+  researchModel        String?
+  researchFallbackUsed Boolean                 @default(false)
+  researchInputHash    String?
+  researchAnalyzedAt   DateTime?
+  researchConfidence   Float?
+  candidateMatches     CandidateCompanyMatch[]
+
+  @@index([researchStatus])
+  @@index([researchAnalyzedAt])
 }
 
 model LeadSearch {
-  id              String    @id @default(cuid())
-  keyword         String
-  area            String
-  requestedLimit  Int
-  enrichEmails    Boolean   @default(false)
-  status          String    @default("running")
-  foundCount      Int       @default(0)
-  skippedCount    Int       @default(0)
-  error           String?
-  createdAt       DateTime  @default(now())
-  completedAt     DateTime?
-  leads           Lead[]
+  id             String    @id @default(cuid())
+  keyword        String
+  area           String
+  requestedLimit Int
+  enrichEmails   Boolean   @default(false)
+  status         String    @default("running")
+  foundCount     Int       @default(0)
+  skippedCount   Int       @default(0)
+  error          String?
+  createdAt      DateTime  @default(now())
+  completedAt    DateTime?
+  leads          Lead[]
 
   @@index([createdAt])
   @@index([status])
 }
 
 model Lead {
-  id              String     @id @default(cuid())
-  searchId        String
-  search          LeadSearch @relation(fields: [searchId], references: [id], onDelete: Cascade)
-  companyId       String?
-  company         Company?   @relation(fields: [companyId], references: [id], onDelete: SetNull)
-  name            String
-  category        String?
-  address         String?
-  city            String?
-  phone           String?
-  email           String?
-  website         String?
-  rating          Float?
-  reviewCount     Int?
-  latitude        Float?
-  longitude       Float?
-  sourceUrl       String
-  fingerprint     String
-  status          String     @default("new")
-  createdAt       DateTime   @default(now())
-  updatedAt       DateTime   @updatedAt
+  id          String     @id @default(cuid())
+  searchId    String
+  search      LeadSearch @relation(fields: [searchId], references: [id], onDelete: Cascade)
+  companyId   String?
+  company     Company?   @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  name        String
+  category    String?
+  address     String?
+  city        String?
+  phone       String?
+  email       String?
+  website     String?
+  rating      Float?
+  reviewCount Int?
+  latitude    Float?
+  longitude   Float?
+  sourceUrl   String
+  fingerprint String
+  status      String     @default("new")
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
 
   @@index([searchId, status])
   @@index([fingerprint])
@@ -96,22 +110,71 @@ model Contact {
 }
 
 model GeneratedMessage {
-  id        String   @id @default(cuid())
-  companyId String?
-  contactId String?
-  company   Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
-  contact   Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
-  purpose   String
-  tone      String
-  language  String   @default("English")
-  subject   String
-  body      String
-  provider  String
-  createdAt DateTime @default(now())
+  id                     String                 @id @default(cuid())
+  ownerSettingsId        String?
+  companyId              String?
+  contactId              String?
+  matchId                String?
+  company                Company?               @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  contact                Contact?               @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  match                  CandidateCompanyMatch? @relation(fields: [matchId], references: [id], onDelete: SetNull)
+  ownerSettings          UserSettings?          @relation(fields: [ownerSettingsId], references: [id], onDelete: Cascade)
+  purpose                String
+  tone                   String
+  language               String                 @default("English")
+  subject                String
+  body                   String
+  provider               String
+  providerModel          String?
+  fallbackUsed           Boolean                @default(false)
+  promptVersion          String?
+  companyFactUsed        String?
+  companyFactSourceUrl   String?
+  candidateEvidenceUsed  String?
+  selectedProject        String?
+  matchingAngle          String?
+  evaluationData         String                 @default("")
+  qualityScore           Float?
+  automaticRewriteUsed   Boolean                @default(false)
+  generatedAt            DateTime?
+  saveFingerprint        String?                @unique
+  companyNameSnapshot    String?
+  companyWebsiteSnapshot String?
+  contactSnapshot        String                 @default("")
+  signatureSnapshot      String?
+  messageType            String                 @default("spontaneous_application")
+  evidenceSnapshot       String                 @default("")
+  profileVersion         Int?
+  researchVersion        String?
+  matchVersion           String?
+  createdAt              DateTime               @default(now())
 
+  @@index([ownerSettingsId, createdAt])
   @@index([companyId])
   @@index([contactId])
+  @@index([matchId])
   @@index([createdAt])
+}
+
+model CandidateCompanyMatch {
+  id                String             @id @default(cuid())
+  companyId         String
+  contactId         String?
+  company           Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  generatedMessages GeneratedMessage[]
+  targetRole        String
+  jobOfferHash      String?
+  inputHash         String
+  matchData         String
+  matchScore        Float
+  promptVersion     String
+  status            String             @default("ready")
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  @@index([companyId, createdAt])
+  @@index([inputHash])
+  @@index([status])
 }
 
 model EmailTemplate {
@@ -134,24 +197,39 @@ model ActivityLog {
 }
 
 model UserSettings {
-  id                 String   @id @default(cuid())
-  singletonKey       String   @unique @default("default")
-  candidateProfile   String   @default("")
-  defaultSignature   String   @default("")
-  defaultTone        String   @default("professional")
-  defaultLanguage    String   @default("English")
-  fullName           String   @default("")
-  email              String   @default("")
-  phone              String   @default("")
-  location           String   @default("")
-  targetRole         String   @default("")
-  experienceSummary  String   @default("")
-  skills             String   @default("")
-  languages          String   @default("")
-  preferredLocations String   @default("")
-  cvText             String   @default("")
-  aiProvider         String   @default("mock")
-  nvidiaApiKey       String   @default("")
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  id                  String             @id @default(cuid())
+  singletonKey        String             @unique @default("default")
+  candidateProfile    String             @default("")
+  defaultSignature    String             @default("")
+  defaultTone         String             @default("professional")
+  defaultLanguage     String             @default("English")
+  fullName            String             @default("")
+  email               String             @default("")
+  phone               String             @default("")
+  location            String             @default("")
+  targetRole          String             @default("")
+  experienceSummary   String             @default("")
+  skills              String             @default("")
+  languages           String             @default("")
+  preferredLocations  String             @default("")
+  cvText              String             @default("")
+  aiProvider          String             @default("mock")
+  nvidiaApiKey        String             @default("")
+  structuredProfile   String             @default("")
+  profileManualFields String             @default("[]")
+  cvExtractionData    String             @default("")
+  cvAnalysisStatus    String             @default("not_analyzed")
+  cvAnalysisVersion   String?
+  cvAnalysisProvider  String?
+  cvAnalysisModel     String?
+  cvAnalysisLatencyMs Int?
+  cvAnalysisRequestId String?
+  cvInputHash         String?
+  cvAnalyzedAt        DateTime?
+  profileVersion      Int                @default(0)
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  generatedMessages   GeneratedMessage[]
+
+  @@index([cvAnalysisStatus])
 }

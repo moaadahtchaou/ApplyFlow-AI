@@ -4,8 +4,8 @@ import { Badge } from '@/components/ui/Badge';
 import { getAiProviderStatus } from '@/lib/ai/generate-email';
 import { prisma } from '@/lib/prisma';
 import { getOrCreateSettings } from '@/lib/settings';
-import { formatDate, truncate } from '@/lib/utils';
 import Link from 'next/link';
+import { SavedMessageHistory } from '@/components/messages/SavedMessageHistory';
 
 export const metadata = { title: 'AI Generator' };
 
@@ -16,27 +16,43 @@ export default async function AiGeneratorPage({
 }) {
   const params = await searchParams;
   const [companies, contacts, settings] = await Promise.all([
-    prisma.company.findMany({ orderBy: { name: 'asc' }, select: { id: true, name: true, email: true } }),
-    prisma.contact.findMany({ orderBy: { fullName: 'asc' }, select: { id: true, fullName: true, email: true, companyId: true } }),
+    prisma.company.findMany({
+      orderBy: { name: 'asc' },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        website: true,
+        researchStatus: true,
+        researchAnalyzedAt: true,
+        researchConfidence: true
+      }
+    }),
+    prisma.contact.findMany({ orderBy: { fullName: 'asc' }, select: { id: true, fullName: true, title: true, email: true, companyId: true } }),
     getOrCreateSettings()
   ]);
   const aiStatus = await getAiProviderStatus();
   const settingsDraft = {
-    candidateProfile: settings.candidateProfile || [
-      settings.experienceSummary,
-      settings.skills ? `Skills: ${settings.skills}` : '',
-      settings.languages ? `Languages: ${settings.languages}` : '',
-      settings.cvText
-    ].filter(Boolean).join('\n'),
     defaultSignature: settings.defaultSignature,
     defaultTone: settings.defaultTone,
     defaultLanguage: settings.defaultLanguage,
-    targetRole: settings.targetRole
+    targetRole: settings.targetRole,
+    candidateStatus: settings.cvAnalysisStatus,
+    candidateAnalyzedAt: settings.cvAnalyzedAt?.toISOString() ?? null
   };
   const recentMessages = await prisma.generatedMessage.findMany({
+    where: { ownerSettingsId: settings.id },
     orderBy: { createdAt: 'desc' },
-    take: 6,
-    include: { company: true }
+    take: 100,
+    select: {
+      id: true,
+      subject: true,
+      companyNameSnapshot: true,
+      purpose: true,
+      language: true,
+      qualityScore: true,
+      createdAt: true
+    }
   });
   const initialCompanyId = companies.some((c) => c.id === params.companyId) ? params.companyId : undefined;
   const initialContact = contacts.find((c) => c.id === params.contactId);
@@ -58,7 +74,8 @@ export default async function AiGeneratorPage({
         <Badge variant={aiStatus.mockMode ? 'warning' : 'success'}>{aiStatus.provider}</Badge>
         <span className="text-xs text-on-surface-muted">{aiStatus.model}</span>
         {aiStatus.nvidiaConfigured && <Badge variant="primary">NVIDIA ✓</Badge>}
-        {aiStatus.mockMode && <Badge variant="warning">Fallback Active</Badge>}
+        {aiStatus.mockMode && <Badge variant="warning">Mock mode</Badge>}
+        {!aiStatus.mockMode && !aiStatus.nvidiaConfigured && <Badge variant="danger">Key required</Badge>}
         <Link href="/settings" className="ml-auto text-xs font-semibold text-primary hover:underline">
           Configure →
         </Link>
@@ -66,37 +83,25 @@ export default async function AiGeneratorPage({
 
       {/* Two-pane generator */}
       <AiGeneratorClient
-        companies={companies}
+        companies={companies.map((company) => ({
+          ...company,
+          researchAnalyzedAt: company.researchAnalyzedAt?.toISOString() ?? null
+        }))}
         contacts={contacts}
         settings={settingsDraft}
         initialCompanyId={initialCompanyId}
         initialContactId={initialContactId}
       />
 
-      {/* Saved history */}
-      {recentMessages.length > 0 && (
-        <div className="mt-8">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-on-surface">Saved Message History</h2>
-            <span className="text-xs text-on-surface-muted">{recentMessages.length} saved</span>
-          </div>
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {recentMessages.map((message) => (
-              <div key={message.id} className="card p-4">
-                <p className="truncate font-semibold text-on-surface">{message.subject}</p>
-                <div className="mt-1 flex flex-wrap gap-1">
-                  <Badge variant="muted">{message.purpose}</Badge>
-                  <Badge variant="muted">{message.language}</Badge>
-                  {message.company && (
-                    <Badge variant="primary">{message.company.name}</Badge>
-                  )}
-                </div>
-                <p className="mt-2 text-xs text-on-surface-muted">{formatDate(message.createdAt)}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      <SavedMessageHistory key={recentMessages.map((message) => message.id).join(':')} initialMessages={recentMessages.map((message) => ({
+        id: message.id,
+        subject: message.subject,
+        companyName: message.companyNameSnapshot ?? 'Company unavailable',
+        targetRole: message.purpose,
+        language: message.language,
+        qualityScore: message.qualityScore,
+        createdAt: message.createdAt.toISOString()
+      }))} />
     </div>
   );
 }

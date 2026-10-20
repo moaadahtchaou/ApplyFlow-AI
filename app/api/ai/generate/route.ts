@@ -1,32 +1,76 @@
 import { NextResponse } from 'next/server';
-import { generateEmail } from '@/lib/ai/generate-email';
+import { z } from 'zod';
+import {
+  candidateCompanyMatchSchema,
+  candidateProfileSchema,
+  companyResearchSchema,
+  messageRequestSchema
+} from '@/lib/ai/contracts';
+import { runMessagePipeline } from '@/lib/ai/message-pipeline';
+import { logAiError, parseStored, publicError, stableHash } from '@/lib/ai/storage';
 import { prisma } from '@/lib/prisma';
-import { aiEmailRequestSchema, type AiEmailGenerationContext } from '@/lib/validations/ai';
+import { getOrCreateSettings } from '@/lib/settings';
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request) {
   try {
-    const body: unknown = await request.json();
-    const input = aiEmailRequestSchema.parse(body);
-
-    const [company, contact] = await Promise.all([
-      input.companyId ? prisma.company.findUnique({ where: { id: input.companyId } }) : null,
-      input.contactId ? prisma.contact.findUnique({ where: { id: input.contactId } }) : null
+    const input = messageRequestSchema.parse(await request.json());
+    const [settings, company, contact, savedMatch] = await Promise.all([
+      getOrCreateSettings(),
+      prisma.company.findUnique({ where: { id: input.companyId } }),
+      input.contactId ? prisma.contact.findUnique({ where: { id: input.contactId } }) : null,
+      input.matchId ? prisma.candidateCompanyMatch.findUnique({ where: { id: input.matchId } }) : null
     ]);
-
-    const context: AiEmailGenerationContext = {
-      ...input,
-      companyName: company?.name ?? 'the company',
-      companyWebsite: company?.website,
-      companyIndustry: company?.industry,
-      contactName: contact?.fullName,
-      contactTitle: contact?.title,
-      contactEmail: contact?.email
-    };
-
-    const email = await generateEmail(context);
-    return NextResponse.json({ email });
+    if (!company) return NextResponse.json({ error: 'Company not found.', code: 'NOT_FOUND' }, { status: 404 });
+    if (contact && contact.companyId !== company.id) {
+      return NextResponse.json({ error: 'The selected contact does not belong to this company.', code: 'CONTACT_MISMATCH' }, { status: 400 });
+    }
+    const candidate = parseStored(candidateProfileSchema, settings.structuredProfile);
+    const research = parseStored(companyResearchSchema, company.researchData);
+    const match = savedMatch ? parseStored(candidateCompanyMatchSchema, savedMatch.matchData) : null;
+    if (!candidate || !research || !match || !['ready', 'limited'].includes(savedMatch?.status ?? '') || savedMatch?.companyId !== company.id) {
+      return NextResponse.json({
+        error: 'A current candidate profile, company analysis, and calculated match are required before generation.',
+        code: 'PIPELINE_NOT_READY'
+      }, { status: 422 });
+    }
+    const expectedMatchHash = stableHash({
+      profileVersion: settings.profileVersion,
+      researchHash: company.researchInputHash,
+      targetRole: input.targetRole,
+      contactId: contact?.id,
+      jobOfferText: input.jobOfferText,
+      additionalInstructions: input.additionalInstructions
+    });
+    if (savedMatch.inputHash !== expectedMatchHash) {
+      await prisma.candidateCompanyMatch.update({ where: { id: savedMatch.id }, data: { status: 'outdated' } });
+      return NextResponse.json({ error: 'The selected match is outdated. Recalculate it before generation.', code: 'MATCH_OUTDATED' }, { status: 409 });
+    }
+    const result = await runMessagePipeline({
+      candidate,
+      company: research,
+      match,
+      contact: contact ? { name: contact.fullName, title: contact.title ?? undefined } : undefined,
+      request: input
+    }, {
+      requestedProvider: settings.aiProvider,
+      apiKey: settings.nvidiaApiKey
+    });
+    return NextResponse.json({
+      message: result.message,
+      evaluation: result.evaluation,
+      firstEvaluation: result.firstEvaluation,
+      match,
+      matchId: savedMatch.id
+    });
   } catch (error) {
-    console.error(error);
-    return NextResponse.json({ error: 'Could not generate email. Check the request fields and try again.' }, { status: 400 });
+    if (error instanceof z.ZodError) {
+      return NextResponse.json({ error: 'Review the generation fields and try again.', code: 'INVALID_REQUEST' }, { status: 400 });
+    }
+    logAiError('Message generation failed', error);
+    const response = publicError(error, 'Could not generate a verified message.');
+    return NextResponse.json(response.body, { status: response.status });
   }
 }
